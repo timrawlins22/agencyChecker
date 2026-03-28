@@ -384,4 +384,210 @@ async function startRecordingSession(browser, connection) {
     }
 }
 
-module.exports = { startRecordingSession };
+module.exports = { startRecordingSession, startWebRecordingSession };
+
+/**
+ * Gets the browser-side code as a string for injection.
+ */
+function getBrowserCode() {
+    return `
+        ${injectRecorderUI.toString()}
+        ${attachRecorderListeners.toString()}
+        attachRecorderListeners();
+    `;
+}
+
+/**
+ * Start a recording session driven by Socket.io instead of CLI.
+ * @param {object} socket - The Socket.io socket for this client
+ * @param {string} companyId - The company identifier
+ * @param {string} startUrl - The URL to begin recording from
+ * @returns {Promise<{steps: Array, status: string}>}
+ */
+async function startWebRecordingSession(socket, companyId, startUrl) {
+    const puppeteer = require('puppeteer-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+    puppeteer.use(StealthPlugin());
+
+    const browserCode = getBrowserCode();
+    const recordedSteps = [];
+    let lastTimestamp = Date.now();
+    let screenshotInterval = null;
+
+    const recordStep = (step) => {
+        step.step = recordedSteps.length + 1;
+        if (step.delay === undefined) {
+            const now = Date.now();
+            step.delay = now - lastTimestamp;
+            lastTimestamp = now;
+        }
+
+        const last = recordedSteps[recordedSteps.length - 1];
+        if (
+            last &&
+            last.action === step.action &&
+            last.selector === step.selector &&
+            last.url === step.url &&
+            last.value === step.value
+        ) {
+            return;
+        }
+
+        recordedSteps.push(step);
+        // Emit the step to the frontend in real-time
+        socket.emit('recording-step', step);
+    };
+
+    const browser = await puppeteer.launch({
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-infobars',
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.96 Safari/537.36',
+            '--lang=en-US,en;q=0.9',
+            '--window-size=1280,800',
+        ],
+        defaultViewport: { width: 1280, height: 800 },
+    });
+
+    const page = await browser.newPage();
+
+    // Screenshot streaming function
+    const sendScreenshot = async () => {
+        try {
+            const screenshot = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 60 });
+            socket.emit('recording-frame', { image: screenshot, url: page.url() });
+        } catch (e) {
+            // Page may have navigated, skip this frame
+        }
+    };
+
+    // Listen for browser console messages (step capture)
+    page.on('console', (msg) => {
+        const text = msg.text();
+        if (text.startsWith('STEP_JSON')) {
+            try {
+                const json = JSON.parse(text.replace('STEP_JSON', '').trim());
+                if (json.action === 'save_cookies') return;
+                recordStep(json);
+                // Send a fresh screenshot after each action
+                sendScreenshot();
+            } catch (err) {
+                console.warn('Failed to parse step JSON:', text);
+            }
+        }
+    });
+
+    // Reattach recorder on navigation
+    page.on('framenavigated', async (frame) => {
+        if (frame !== page.mainFrame()) return;
+        try {
+            await safeEvaluateCode(page, browserCode);
+            // Send screenshot after navigation
+            setTimeout(() => sendScreenshot(), 1000);
+        } catch (e) {
+            console.error('Failed to reattach recorder listeners:', e.message);
+        }
+    });
+
+    // Handle click commands from the frontend
+    const handleClick = async (data) => {
+        try {
+            const { x, y } = data;
+            await page.mouse.click(x, y);
+            await new Promise(r => setTimeout(r, 500));
+            await sendScreenshot();
+        } catch (e) {
+            console.error('Click failed:', e.message);
+        }
+    };
+
+    // Handle type commands from the frontend
+    const handleType = async (data) => {
+        try {
+            const { text } = data;
+            await page.keyboard.type(text, { delay: 100 });
+            await new Promise(r => setTimeout(r, 300));
+            await sendScreenshot();
+        } catch (e) {
+            console.error('Type failed:', e.message);
+        }
+    };
+
+    // Handle keyboard events from frontend
+    const handleKeypress = async (data) => {
+        try {
+            const { key } = data;
+            await page.keyboard.press(key);
+            await new Promise(r => setTimeout(r, 300));
+            await sendScreenshot();
+        } catch (e) {
+            console.error('Keypress failed:', e.message);
+        }
+    };
+
+    socket.on('recording-click', handleClick);
+    socket.on('recording-type', handleType);
+    socket.on('recording-keypress', handleKeypress);
+
+    try {
+        // Navigate to start URL
+        await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        recordStep({
+            action: 'navigate',
+            url: startUrl,
+            description: `Navigate to ${startUrl}`,
+        });
+
+        await safeEvaluateCode(page, browserCode);
+
+        // Start sending periodic screenshots
+        screenshotInterval = setInterval(() => sendScreenshot(), 2000);
+
+        // Send initial screenshot
+        await sendScreenshot();
+
+        socket.emit('recording-started', { companyId, url: startUrl });
+
+        // Wait for stop signal from frontend
+        const finalSteps = await new Promise((resolve, reject) => {
+            socket.on('stop-recording', () => {
+                const steps = recordedSteps.filter(s => s && s.action);
+                resolve(steps);
+            });
+
+            socket.on('disconnect', () => {
+                reject(new Error('Client disconnected during recording'));
+            });
+        });
+
+        // Save to database
+        if (finalSteps.length > 0) {
+            const patternJsonString = JSON.stringify(finalSteps);
+            await db.execute(
+                `INSERT INTO login_patterns (agent_company_id, pattern_json)
+                 VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE
+                 pattern_json = VALUES(pattern_json),
+                 updated_at = CURRENT_TIMESTAMP()`,
+                [companyId, patternJsonString]
+            );
+        }
+
+        return { steps: finalSteps, status: 'SUCCESS' };
+
+    } catch (err) {
+        console.error('Web recording failed:', err);
+        throw err;
+    } finally {
+        // Cleanup
+        if (screenshotInterval) clearInterval(screenshotInterval);
+        socket.off('recording-click', handleClick);
+        socket.off('recording-type', handleType);
+        socket.off('recording-keypress', handleKeypress);
+        if (browser) {
+            try { await browser.close(); } catch (e) { /* already closed */ }
+        }
+    }
+}

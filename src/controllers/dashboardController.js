@@ -21,15 +21,21 @@ const dashboardController = {
             
             const kpis = kpiRows[0];
             
-            // --- 2. Fetch Urgent Alerts ---
-            const [alertRows] = await db.execute(`
+            // --- 2. Fetch Action Items (Lapsed & At-Risk Policies) ---
+            const [actionRows] = await db.execute(`
                 SELECT 
-                    pa.id, pa.alert_type AS type, up.policy_number AS policy, up.owner_name AS client, pa.start_date AS date
-                FROM policy_alerts pa
-                JOIN unified_policies up ON pa.policy_number = up.policy_number
-                WHERE up.agent_id = ? AND pa.alert_status = 'new'
-                ORDER BY pa.start_date ASC
-                LIMIT 5;
+                    id, 
+                    policy_number AS policy, 
+                    carrier, 
+                    owner_name AS client, 
+                    policy_status AS status,
+                    premium,
+                    date_of_issue AS date
+                FROM unified_policies
+                WHERE agent_id = ? 
+                  AND policy_status IN ('Lapsed', 'Pending Lapse', 'Grace Period')
+                ORDER BY date_of_issue DESC
+                LIMIT 10;
             `, [agentId]);
             
             const [statusRows] = await db.execute(`
@@ -42,7 +48,7 @@ const dashboardController = {
                 ORDER BY count DESC;
             `, [agentId]);
 
-            // --- 4. Fetch Carrier Breakdown (NEW) ---
+            // --- 4. Fetch Carrier Breakdown ---
             const [carrierRows] = await db.execute(`
                 SELECT 
                     carrier, 
@@ -53,7 +59,19 @@ const dashboardController = {
                 ORDER BY count DESC;
             `, [agentId]);
 
-
+            // --- 5. Fetch Premium Trend (Last 6 Months) ---
+            const [trendRows] = await db.execute(`
+                SELECT 
+                    DATE_FORMAT(date_of_issue, '%Y-%m') as sortMonth,
+                    DATE_FORMAT(date_of_issue, '%b') as month,
+                    SUM(premium) as totalPremium
+                FROM unified_policies
+                WHERE agent_id = ? 
+                  AND date_of_issue >= DATE_SUB(LAST_DAY(CURDATE() - INTERVAL 6 MONTH), INTERVAL DAY(LAST_DAY(CURDATE() - INTERVAL 6 MONTH))-1 DAY)
+                  AND policy_status IN ('In Force', 'Active')
+                GROUP BY sortMonth, month
+                ORDER BY sortMonth ASC;
+            `, [agentId]);
 
             res.json({
                 // You can calculate trends later, start with raw numbers
@@ -61,12 +79,14 @@ const dashboardController = {
                 totalFaceAmount: parseFloat(kpis.totalFaceAmount || 0).toFixed(2),
                 totalAnnualPremium: parseFloat(kpis.totalAnnualPremium || 0).toFixed(2),
                 
-                alerts: alertRows.map(alert => ({
-                    id: alert.id,
-                    type: alert.type, // e.g., 'Lapse Risk'
-                    policy: alert.policy,
-                    client: alert.client,
-                    date: new Date(alert.date).toLocaleDateString(), // Format the date for the frontend
+                actionItems: actionRows.map(item => ({
+                    id: item.id,
+                    type: item.status, // e.g., 'Lapsed', 'Grace Period'
+                    policy: item.policy,
+                    carrier: item.carrier,
+                    client: item.client,
+                    premium: parseFloat(item.premium || 0),
+                    date: item.date ? new Date(item.date).toLocaleDateString() : 'N/A',
                 })),
 
                 policyStatusBreakdown: statusRows.map(row => ({
@@ -78,7 +98,11 @@ const dashboardController = {
                     carrier: row.carrier,
                     count: row.count,
                 })),
-                // Add more breakdown data (status, carrier mix) here later
+                
+                premiumTrend: trendRows.map(row => ({
+                    month: row.month,
+                    premium: parseFloat(row.totalPremium) || 0
+                }))
             });
 
         } catch (err) {

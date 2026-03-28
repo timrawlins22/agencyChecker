@@ -11,7 +11,9 @@ require('dotenv').config();
 const agentRoutes = require('./src/routes/agentRoutes.js');
 const dashboardRoutes = require('./src/routes/dashboardRoutes.js'); 
 const publicRoutes = require('./src/routes/publicRoutes.js');
+const mapperRoutes = require('./src/routes/mapperRoutes.js');
 const { initScheduler } = require('./utils/jobScheduler.js');
+const { startWebRecordingSession } = require('./utils/patternRecorder.js');
 
 
 // Create a new Express app and HTTP server
@@ -44,6 +46,7 @@ const io = new Server(server, {
 app.use('/api/agent', agentRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/mapper', mapperRoutes);
 // A map to store active Puppeteer sessions
 const sessions = new Map();
 
@@ -87,6 +90,23 @@ io.on('connection', socket => {
             // Added check for missing session to confirm if the frontend needs re-submission
             console.warn(`MFA code received for unknown/disconnected session: ${data.sessionId}`);
             socket.emit('code-received', { sessionId: data.sessionId, error: "Session not active" });
+        }
+    });
+
+    // --- Mapper Recording Events ---
+    socket.on('start-recording', async (data) => {
+        const { companyId, startUrl } = data;
+        console.log(`[Mapper] Recording requested for ${companyId} at ${startUrl}`);
+        try {
+            const result = await startWebRecordingSession(socket, companyId, startUrl);
+            socket.emit('recording-complete', { 
+                companyId, 
+                stepCount: result.steps.length, 
+                status: result.status 
+            });
+        } catch (err) {
+            console.error('[Mapper] Recording failed:', err.message);
+            socket.emit('recording-error', { error: err.message });
         }
     });
 

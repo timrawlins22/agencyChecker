@@ -2,6 +2,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import CredentialsPage from './pages/CredentialsPage';
+import MapperPage from './pages/MapperPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -34,6 +36,16 @@ function App() {
           <Route path="/dashboard" element={
             <ProtectedRoute>
               <DashboardPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/credentials" element={
+            <ProtectedRoute>
+              <CredentialsPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/mapper" element={
+            <ProtectedRoute>
+              <MapperPage />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const bcrypt = require('bcrypt');
+const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const { encrypt, decrypt } = require('../../utils/crypto');
 const { addJobToQueue } = require('../../utils/jobQueue');
@@ -7,8 +7,8 @@ const { addJobToQueue } = require('../../utils/jobQueue');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const agentController = {
-    
-    
+
+
     async login(req, res) {
         const { username, password } = req.body;
 
@@ -23,21 +23,21 @@ const agentController = {
 
             const agent = rows[0];
 
-            if(!agent.password){
-                const token = jwt.sign({ sub: agent.id, tenant:agent.tenant_id, externalId:agent.external_id, role:agent.role }, JWT_SECRET, { expiresIn: '8h' });
-                const agentInfo = { id: agent.id, tenant:agent.tenant_id, externalId:agent.external_id, role:agent.role, email:agent.email, name:agent.name, active:agent.active, webhook_url:agent.webhook_url };
-                res.json({token, agentInfo, error: 'reset' });
+            if (!agent.password) {
+                const token = jwt.sign({ sub: agent.id, tenant: agent.tenant_id, externalId: agent.external_id, role: agent.role }, JWT_SECRET, { expiresIn: '8h' });
+                const agentInfo = { id: agent.id, tenant: agent.tenant_id, externalId: agent.external_id, role: agent.role, email: agent.email, name: agent.name, active: agent.active, webhook_url: agent.webhook_url };
+                res.json({ token, agentInfo, error: 'reset' });
             }
-            else{
+            else {
                 // Compare hashed password
-                const validPassword = await bcrypt.compare(password, agent.password);
+                const validPassword = await argon2.verify(agent.password, password);
                 if (!validPassword) {
                     return res.status(401).json({ error: 'Invalid credentials' });
                 }
 
                 // Generate JWT token
-                const token = jwt.sign({ sub: agent.id, tenant:agent.tenant_id, externalId:agent.external_id, role:agent.role }, JWT_SECRET, { expiresIn: '8h' });
-                const agentInfo = { id: agent.id, tenant:agent.tenant_id, externalId:agent.external_id, role:agent.role, email:agent.email, name:agent.name, active:agent.active, webhook_url:agent.webhook_url };
+                const token = jwt.sign({ sub: agent.id, tenant: agent.tenant_id, externalId: agent.external_id, role: agent.role }, JWT_SECRET, { expiresIn: '8h' });
+                const agentInfo = { id: agent.id, tenant: agent.tenant_id, externalId: agent.external_id, role: agent.role, email: agent.email, name: agent.name, active: agent.active, webhook_url: agent.webhook_url };
 
                 res.json({ token, agentInfo });
             }
@@ -100,23 +100,23 @@ const agentController = {
             res.status(500).json({ error: "Failed to fetch vendor leads" });
         }
     },
-    async uploadLeadsManual(req,res){
+    async uploadLeadsManual(req, res) {
         try {
             const lead = req.body;
 
             const [result] = await pool.query(
-            `INSERT INTO leads (first_name, last_name, email, phone, lead_type, lead_level, assigned_to, assigned_at, created_at) 
+                `INSERT INTO leads (first_name, last_name, email, phone, lead_type, lead_level, assigned_to, assigned_at, created_at) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [
-                lead.first_name,
-                lead.last_name,
-                lead.email,
-                lead.phone,
-                lead.lead_type,
-                lead.lead_level,
-                lead.assigned_to,
-                lead.assigned_at ? new Date(lead.assigned_at) : null,
-            ]
+                [
+                    lead.first_name,
+                    lead.last_name,
+                    lead.email,
+                    lead.phone,
+                    lead.lead_type,
+                    lead.lead_level,
+                    lead.assigned_to,
+                    lead.assigned_at ? new Date(lead.assigned_at) : null,
+                ]
             );
 
             res.json({ id: result.insertId, ...lead });
@@ -133,10 +133,9 @@ const agentController = {
         if (!companyId || !username || !password) {
             return res.status(400).json({ error: 'Missing carrier ID, username, or password.' });
         }
-        
-        // Ensure companyId is an integer if you are using auto-parsing middleware
-        const companyIdInt = parseInt(companyId);
-        if (isNaN(companyIdInt)) {
+
+        // Ensure companyId is a valid string
+        if (typeof companyId !== 'string') {
             return res.status(400).json({ error: 'Invalid company ID format.' });
         }
 
@@ -144,14 +143,14 @@ const agentController = {
             // --- Step 1: Encrypt the sensitive data ---
             const encryptedUsername = encrypt(username);
             const encryptedPassword = encrypt(password);
-            
+
             // --- Step 2: Store/Update Credentials in agent_carrier_credentials (UPSERT) ---
             // This query inserts a NEW record OR updates the existing one based on the unique key (agent_id, company_id)
             const result = await db.execute(
                 `INSERT INTO agent_companies (agent_id, company_id, is_enabled) 
                 VALUES (?, ?, 1)
                 ON DUPLICATE KEY UPDATE is_enabled = 1, agent_company_id = LAST_INSERT_ID(agent_company_id)`,
-                [agentId, companyIdInt]
+                [agentId, companyId]
             )
             const agentCompanyId = result[0].insertId;
             await db.execute(
@@ -159,45 +158,44 @@ const agentController = {
                     (agent_id, company_id, agent_company_id, login_username_encrypted, login_password_encrypted) 
                 VALUES (?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE 
-                    login_username_encrypted = VALUES(login_username_encrypted),
-                    login_password_encrypted = VALUES(login_password_encrypted),
-                    updated_at = NOW()`,
-                [agentId, companyIdInt, agentCompanyId, encryptedUsername, encryptedPassword]
+                     login_password_encrypted = VALUES(login_password_encrypted),
+                     updated_at = NOW()`,
+                [agentId, companyId, agentCompanyId, encryptedUsername, encryptedPassword]
             );
 
             // --- Step 3: Ensure the carrier is enabled in the agent_companies table (UPSERT) ---
             // This link is required for the bot management system to know which carriers to run for the agent.
-            
-            
-            
-            await addJobToQueue(agentId, companyIdInt, agentCompanyId, 'INITIAL_SETUP', encryptedUsername, encryptedPassword);
+
+
+
+            await addJobToQueue(agentId, companyId, agentCompanyId, 'INITIAL_SETUP', encryptedUsername, encryptedPassword);
             // Optional: Trigger the initial bot run here, if appropriate
             // runInitialBot(agentId, companyIdInt); 
 
-            return res.json({ message: 'Carrier credentials saved and aggregation enabled.', companyId: companyIdInt });
+            return res.json({ message: 'Carrier credentials saved and aggregation enabled.', companyId: companyId });
 
         } catch (err) {
             console.error("Error saving carrier credentials:", err);
-            
+
             // Check for the foreign key error explicitly, as it's the most common failure here.
             if (err.code === 'ER_NO_REFERENCED_ROW_2') {
                 return res.status(400).json({ error: `Carrier ID ${companyId} not found in master list. Please check the 'companies' table.` });
             }
-            
+
             // General server error fallback
             return res.status(500).json({ error: 'Server error: Failed to securely save credentials.' });
         }
     },
-    async uploadLeads(req,res){
-        
+    async uploadLeads(req, res) {
+
         try {
             // Expect leads[] in the body (parsed by frontend)
             const { leads } = req.body;
             const { tenant, sub } = req.user;
-            const vendor_profile_id=0;
-            const vendor_id=0;
+            const vendor_profile_id = 0;
+            const vendor_id = 0;
             if (!leads || !Array.isArray(leads) || leads.length === 0) {
-            return res.status(400).json({ error: "No leads provided" });
+                return res.status(400).json({ error: "No leads provided" });
             }
 
             // Prepare values for bulk insert
@@ -262,25 +260,25 @@ const agentController = {
             }
 
             const storedHash = rows[0].password;
-            if(storedHash===null){
-                const salt = await bcrypt.genSalt(10);
-                const newHash = await bcrypt.hash(newPassword, salt);
+            if (storedHash === null) {
+                // const salt = await bcrypt.genSalt(10);
+                const newHash = await argon2.hash(newPassword);
                 await db.execute(
                     "UPDATE agents SET password = ? WHERE id = ?",
                     [newHash, agentId]
                 );
                 return res.json({ message: "Password updated successfully" });
             }
-            else{
+            else {
                 // 2. Compare current password with stored hash
-                const isMatch = await bcrypt.compare(currentPassword, storedHash);
+                const isMatch = await argon2.verify(storedHash, currentPassword);
                 if (!isMatch) {
                     return res.status(400).json({ error: "Current password is incorrect" });
                 }
 
                 // 3. Hash the new password
-                const salt = await bcrypt.genSalt(10);
-                const newHash = await bcrypt.hash(newPassword, salt);
+                // const salt = await bcrypt.genSalt(10);
+                const newHash = await argon2.hash(newPassword);
 
                 // 4. Update password in DB
                 await db.execute(
@@ -296,8 +294,8 @@ const agentController = {
         }
     },
     async getAgent(req, res) {
-        const{ role }=req.user;
-        if(role=== ('principal' || 'admin')){
+        const { role } = req.user;
+        if (role === ('principal' || 'admin')) {
             const { agentId } = req.params;
             const [rows] = await db.execute(
                 `SELECT agents.*,
@@ -315,26 +313,26 @@ const agentController = {
             if (rows.length === 0) {
                 return res.status(404).json({ error: "User not found" });
             }
-            else{
+            else {
                 const agent = rows[0];
                 return res.json(agent);
             }
 
-            
+
         }
     },
     async triggerManualSync(req, res) {
         const agentId = req.user.sub;
-        const { companyId } = req.body; 
+        const { companyId } = req.body;
 
         try {
             if (companyId) {
                 // Run a single carrier
-               const [rows] = await db.execute(
+                const [rows] = await db.execute(
                     'SELECT company_id, agent_company_id FROM agent_companies WHERE agent_id = ? AND company_id = ? AND is_enabled = 1',
                     [agentId, companyId]
                 );
-                
+
                 for (const row of rows) {
                     await addJobToQueue(agentId, row.company_id, row.agent_company_id, 'MANUAL_SINGLE');
                 }
@@ -344,7 +342,7 @@ const agentController = {
                     'SELECT company_id, agent_company_id FROM agent_companies WHERE agent_id = ? AND company_id = ? AND is_enabled = 1',
                     [agentId, companyId]
                 );
-                
+
                 for (const row of rows) {
                     await addJobToQueue(agentId, row.company_id, row.agent_company_id, 'MANUAL_ALL');
                 }
@@ -373,10 +371,8 @@ const agentController = {
                 ORDER BY c.name ASC
             `, [agentId, agentId]);
 
-            // Filter the list to only show carriers the agent has enabled or has credentials for
-            const enabledCarriers = rows.filter(row => row.isEnabled || row.hasCredentials);
-
-            res.json(enabledCarriers);
+            // Return all carriers so the user can see options to connect
+            res.json(rows);
         } catch (err) {
             console.error("Error fetching agent carriers:", err);
             res.status(500).json({ error: 'Failed to fetch carrier list.' });
