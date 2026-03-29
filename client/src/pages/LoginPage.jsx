@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Lock, User, Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -102,13 +102,22 @@ export default function LoginPage() {
 
                             <Button
                                 type="submit"
-                                className="w-full shadow-lg shadow-primary-500/20"
+                                className="w-full shadow-lg shadow-primary-500/20 mt-4"
                                 size="lg"
                                 loading={loading}
                             >
                                 Sign in
                             </Button>
                         </form>
+
+                        <div className="mt-6 text-center">
+                            <p className="text-sm text-slate-600">
+                                Don't have an account?{' '}
+                                <Link to="/pricing" className="font-medium text-primary-600 hover:text-primary-500">
+                                    View Plans & Sign up
+                                </Link>
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
