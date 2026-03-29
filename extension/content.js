@@ -2,8 +2,8 @@
  * AgentPortal Carrier Sync - Content Script Step Executor
  * 
  * Injected into carrier portal tabs by the background worker.
- * Replays recorded pattern steps directly in the page DOM.
- * Adapted from server-side patternExecuter.js for browser context.
+ * Executes ONE step at a time (called by background for each step).
+ * After navigation steps, the background re-injects this script.
  */
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -87,7 +87,6 @@ function simulateType(element, text) {
 
 /**
  * Scrape visible table data from the page.
- * Used instead of file downloads in the extension context.
  */
 function scrapeTableData() {
     const tables = document.querySelectorAll('table');
@@ -99,19 +98,22 @@ function scrapeTableData() {
         const headers = [];
         const rows = [];
 
-        // Get headers
         const headerCells = table.querySelectorAll('thead th, thead td, tr:first-child th');
-        headerCells.forEach(cell => headers.push(cell.innerText.trim()));
+        headerCells.forEach(cell => {
+            const cleanText = cell.innerText.replace(/\r?\n|\r/g, ' ').replace(/\s+/g, ' ').trim();
+            headers.push(cleanText);
+        });
 
-        // If no thead, try first row
         if (headers.length === 0) {
             const firstRow = table.querySelector('tr');
             if (firstRow) {
-                firstRow.querySelectorAll('th, td').forEach(cell => headers.push(cell.innerText.trim()));
+                firstRow.querySelectorAll('th, td').forEach(cell => {
+                    const cleanText = cell.innerText.replace(/\r?\n|\r/g, ' ').replace(/\s+/g, ' ').trim();
+                    headers.push(cleanText);
+                });
             }
         }
 
-        // Get data rows (skip header row if headers were from first row)
         const dataRows = table.querySelectorAll('tbody tr');
         const rowsToProcess = dataRows.length > 0 
             ? dataRows 
@@ -138,92 +140,6 @@ function scrapeTableData() {
 }
 
 /**
- * Execute a single step
- */
-async function executeStep(step, stepIndex, totalSteps) {
-    console.log(`[Sync] Step ${stepIndex + 1}/${totalSteps}: ${step.action} → ${step.selector || step.url || step.text || ''}`);
-
-    switch (step.action) {
-        case 'navigate':
-            window.location.href = step.url;
-            // Wait for the page to reload
-            await new Promise(resolve => {
-                window.addEventListener('load', resolve, { once: true });
-                setTimeout(resolve, 10000); // fallback timeout
-            });
-            await sleep(2000);
-            break;
-
-        case 'click': {
-            const el = await waitForSelector(step.selector);
-            await sleep(500);
-            el.click();
-            break;
-        }
-
-        case 'clickByText': {
-            const el = await waitForText(step.selector, step.text);
-            await sleep(500);
-            el.click();
-            break;
-        }
-
-        case 'type': {
-            const el = await waitForSelector(step.selector);
-            // Skip credential placeholders — agent is already logged in
-            if (step.value === '[[USERNAME]]' || step.value === '[[PASSWORD]]') {
-                console.log(`[Sync] Skipping credential field: ${step.selector}`);
-                break;
-            }
-            simulateType(el, step.value);
-            break;
-        }
-
-        case 'download': {
-            // In extension context, scrape table data instead of downloading
-            console.log('[Sync] Download step → scraping visible table data...');
-            await sleep(3000); // Wait for data to load
-            const scraped = scrapeTableData();
-            if (scraped) {
-                // Store scraped data to return later
-                window.__agentPortalScrapedData = scraped;
-                console.log(`[Sync] Scraped ${scraped.reduce((sum, t) => sum + t.rows.length, 0)} rows from ${scraped.length} table(s)`);
-            } else {
-                console.warn('[Sync] No table data found on page');
-            }
-            break;
-        }
-
-        case 'wait_selector': {
-            await waitForSelector(step.selector, 30000);
-            break;
-        }
-
-        case 'wait_time': {
-            const ms = parseInt(step.value);
-            if (!isNaN(ms)) await sleep(ms);
-            break;
-        }
-
-        case 'end_session':
-            console.log('[Sync] End session step reached.');
-            break;
-
-        case 'save_cookies':
-            // No-op in extension context — browser manages cookies natively
-            break;
-
-        default:
-            console.warn(`[Sync] Unknown action: ${step.action}, skipping.`);
-    }
-
-    // Human-like delay between steps
-    if (step.delay && !isNaN(step.delay)) {
-        await sleep(Math.min(step.delay, 5000));
-    }
-}
-
-/**
  * Detect if the current page is showing an MFA/2FA challenge.
  */
 function detectMFA() {
@@ -239,7 +155,6 @@ function detectMFA() {
     const hasKeyword = mfaKeywords.some(kw => pageText.includes(kw));
     if (!hasKeyword) return false;
 
-    // Also look for a short text input (likely a code field)
     const inputs = document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])');
     const hasCodeInput = Array.from(inputs).some(input => {
         const maxLen = input.maxLength;
@@ -256,95 +171,103 @@ function detectMFA() {
 }
 
 /**
- * Wait for the user to complete MFA. Polls until the MFA indicators disappear.
+ * Execute a single step. Returns result immediately.
  */
-function waitForMFACompletion(timeout = 300000) {
-    return new Promise((resolve, reject) => {
-        const startTime = Date.now();
-        const originalUrl = window.location.href;
+async function executeStep(step) {
+    console.log(`[Sync] Executing: ${step.action} → ${step.selector || step.url || step.text || ''}`);
 
-        const check = () => {
-            // MFA is complete if page navigated away or MFA indicators are gone
-            if (window.location.href !== originalUrl || !detectMFA()) {
-                resolve();
-                return;
+    switch (step.action) {
+        case 'navigate':
+            // Background handles navigation directly — this shouldn't be called
+            // But just in case, return a signal
+            return { navigated: true, url: step.url };
+
+        case 'click': {
+            const el = await waitForSelector(step.selector);
+            await sleep(500);
+            el.click();
+            await sleep(1000);
+            return { done: true };
+        }
+
+        case 'clickByText': {
+            const el = await waitForText(step.selector, step.text);
+            await sleep(500);
+            el.click();
+            await sleep(1000);
+            return { done: true };
+        }
+
+        case 'type': {
+            const el = await waitForSelector(step.selector);
+            if (step.value === '[[USERNAME]]' || step.value === '[[PASSWORD]]') {
+                console.log(`[Sync] Skipping credential field: ${step.selector}`);
+                return { done: true };
             }
-            if (Date.now() - startTime > timeout) {
-                reject(new Error('MFA timeout — code was not entered within 5 minutes.'));
-                return;
+            simulateType(el, step.value);
+            return { done: true };
+        }
+
+        case 'download': {
+            console.log('[Sync] Download step → scraping visible table data...');
+            await sleep(3000);
+            const scraped = scrapeTableData();
+            if (scraped) {
+                console.log(`[Sync] Scraped ${scraped.reduce((sum, t) => sum + t.rows.length, 0)} rows from ${scraped.length} table(s)`);
+                return { done: true, scraped: scraped };
+            } else {
+                console.warn('[Sync] No table data found on page');
+                return { done: true, scraped: null };
             }
-            setTimeout(check, 1000);
-        };
-
-        // Start checking after a brief delay (give the user a moment)
-        setTimeout(check, 2000);
-    });
-}
-
-/**
- * Execute all steps sequentially
- */
-async function executeAllSteps(steps, companyId) {
-    const scrapedData = { tables: [], pageTitle: document.title, url: window.location.href };
-
-    for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
-
-        // Stop if we hit end_session
-        if (step.action === 'end_session') break;
-
-        // --- MFA Detection (check before each step) ---
-        if (detectMFA()) {
-            console.log('[Sync] MFA detected! Notifying background worker...');
-            chrome.runtime.sendMessage({ type: 'MFA_DETECTED', companyId });
-            await waitForMFACompletion();
-            console.log('[Sync] MFA completed, resuming steps.');
-            chrome.runtime.sendMessage({ type: 'MFA_COMPLETED', companyId });
-            await sleep(2000); // Allow page to settle after MFA
         }
 
-        try {
-            await executeStep(step, i, steps.length);
-        } catch (error) {
-            console.error(`[Sync] Step ${i + 1} failed:`, error);
-            return {
-                success: false,
-                error: `Step ${i + 1} (${step.action}) failed: ${error.message}`,
-                data: scrapedData
-            };
+        case 'wait_selector': {
+            await waitForSelector(step.selector, 30000);
+            return { done: true };
         }
-    }
 
-    // Collect any scraped data
-    if (window.__agentPortalScrapedData) {
-        scrapedData.tables = window.__agentPortalScrapedData;
-    }
-
-    // Also try to scrape any visible tables at the end (in case no download step)
-    if (scrapedData.tables.length === 0) {
-        const finalScrape = scrapeTableData();
-        if (finalScrape) {
-            scrapedData.tables = finalScrape;
+        case 'wait_time': {
+            const ms = parseInt(step.value);
+            if (!isNaN(ms)) await sleep(ms);
+            return { done: true };
         }
-    }
 
-    return {
-        success: true,
-        data: scrapedData
-    };
+        case 'end_session':
+            return { done: true, ended: true };
+
+        case 'save_cookies':
+            return { done: true };
+
+        default:
+            console.warn(`[Sync] Unknown action: ${step.action}, skipping.`);
+            return { done: true };
+    }
 }
 
 // --- Message Listener ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'EXECUTE_STEPS') {
-        console.log(`[Sync] Received ${message.steps.length} steps for ${message.companyId}`);
+    if (message.type === 'PING') {
+        sendResponse({ pong: true, url: window.location.href });
+        return false;
+    }
 
-        executeAllSteps(message.steps, message.companyId)
-            .then(result => sendResponse(result))
+    if (message.type === 'EXECUTE_STEP') {
+        executeStep(message.step)
+            .then(result => sendResponse({ success: true, ...result }))
             .catch(err => sendResponse({ success: false, error: err.message }));
-
         return true; // async response
+    }
+
+    if (message.type === 'SCRAPE_TABLES') {
+        const scraped = scrapeTableData();
+        sendResponse({ success: true, scraped: scraped });
+        return false;
+    }
+
+    if (message.type === 'CHECK_MFA') {
+        sendResponse({ mfa: detectMFA() });
+        return false;
     }
 });
 
-console.log('[AgentPortal Extension] Content script loaded.');
+console.log('[AgentPortal Extension] Content script loaded on', window.location.href);

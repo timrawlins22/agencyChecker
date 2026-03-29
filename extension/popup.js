@@ -1,6 +1,6 @@
 /**
  * AgentPortal Carrier Sync - Popup Script
- * Handles login, carrier listing, and sync triggering.
+ * Handles login, carrier listing, sync triggering, and pattern recording.
  */
 
 // --- DOM Elements ---
@@ -19,6 +19,36 @@ const carrierList = document.getElementById('carrierList');
 const syncAllBtn = document.getElementById('syncAllBtn');
 const mappedCount = document.getElementById('mappedCount');
 
+// Recording elements
+const recordCompanySelect = document.getElementById('recordCompanySelect');
+const startRecordBtn = document.getElementById('startRecordBtn');
+const stopRecordBtn = document.getElementById('stopRecordBtn');
+const savePatternBtn = document.getElementById('savePatternBtn');
+const discardPatternBtn = document.getElementById('discardPatternBtn');
+const recordStartArea = document.getElementById('recordStartArea');
+const recordActiveArea = document.getElementById('recordActiveArea');
+const recordDoneArea = document.getElementById('recordDoneArea');
+const recordStatusBar = document.getElementById('recordStatusBar');
+const recordStepList = document.getElementById('recordStepList');
+const markerLoginBtn = document.getElementById('markerLoginBtn');
+const markerDownloadBtn = document.getElementById('markerDownloadBtn');
+const markerCookiesBtn = document.getElementById('markerCookiesBtn');
+const markerEndBtn = document.getElementById('markerEndBtn');
+
+// --- Tab Switching ---
+function switchToTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+    if (btn) btn.classList.add('active');
+    const content = document.getElementById(tabId);
+    if (content) content.classList.add('active');
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchToTab(btn.dataset.tab));
+});
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', async () => {
     const config = await sendMessage({ type: 'GET_CONFIG' });
@@ -26,6 +56,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (config.token && config.apiBaseUrl) {
         showMainView(config);
         loadCarriers();
+        await loadRecordCompanies();
+        await checkRecordingState();
     } else {
         showLoginView();
     }
@@ -34,6 +66,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.runtime.onMessage.addListener((message) => {
         if (message.type === 'SYNC_STATE_UPDATE') {
             updateCarrierStatus(message.companyId, message.state);
+        }
+        if (message.type === 'NEW_RECORDED_STEP') {
+            addStepToList(message.step);
         }
     });
 });
@@ -54,7 +89,6 @@ loginBtn.addEventListener('click', async () => {
     hideError();
 
     try {
-        // Call the backend login API directly
         const response = await fetch(`${apiBaseUrl}/api/agent/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -67,7 +101,6 @@ loginBtn.addEventListener('click', async () => {
             throw new Error(data.error || 'Login failed');
         }
 
-        // Store credentials in background
         await sendMessage({
             type: 'LOGIN',
             apiBaseUrl,
@@ -77,6 +110,7 @@ loginBtn.addEventListener('click', async () => {
 
         showMainView({ apiBaseUrl, token: data.token, agentInfo: data.agentInfo });
         loadCarriers();
+        loadRecordCompanies();
 
     } catch (err) {
         if (err.message === 'Failed to fetch') {
@@ -193,6 +227,216 @@ function updateCarrierStatus(companyId, state) {
             if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Retry'; }
             break;
     }
+}
+
+// =============================================
+// --- RECORDING TAB ---
+// =============================================
+
+async function loadRecordCompanies() {
+    try {
+        const response = await sendMessage({ type: 'GET_CARRIERS' });
+        if (response.error || !response.carriers) return;
+
+        recordCompanySelect.innerHTML = '<option value="">Select a carrier...</option>';
+        response.carriers.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + (c.hasPattern ? ' (has mapping)' : '');
+            recordCompanySelect.appendChild(opt);
+        });
+    } catch (err) {
+        console.error('Failed to load companies for recorder:', err);
+    }
+}
+
+async function checkRecordingState() {
+    const state = await sendMessage({ type: 'GET_RECORDING_STATE' });
+    if (!state) return;
+
+    if (state.active || (state.steps && state.steps.length > 0)) {
+        // Auto-switch to Record tab
+        switchToTab('recordTab');
+
+        // Restore carrier selection
+        if (state.companyId) {
+            recordCompanySelect.value = state.companyId;
+        }
+
+        // Restore steps
+        recordStepList.innerHTML = '';
+        if (state.steps) {
+            state.steps.forEach(s => addStepToList(s));
+        }
+
+        // Show correct UI state
+        if (state.active) {
+            showRecordingActive();
+        } else {
+            showRecordingDone();
+        }
+    }
+}
+
+// Start Recording
+startRecordBtn.addEventListener('click', async () => {
+    const companyId = recordCompanySelect.value;
+    if (!companyId) {
+        alert('Please select a carrier first.');
+        return;
+    }
+
+    startRecordBtn.disabled = true;
+    startRecordBtn.textContent = 'Starting...';
+    recordStepList.innerHTML = '';
+
+    const result = await sendMessage({ type: 'START_RECORDING', companyId });
+    
+    if (result.error) {
+        alert('Failed to start recording: ' + result.error);
+        startRecordBtn.disabled = false;
+        startRecordBtn.textContent = '⏺ Start Recording';
+        return;
+    }
+
+    showRecordingActive();
+    if (result.step) {
+        addStepToList(result.step);
+    }
+});
+
+// Stop Recording
+stopRecordBtn.addEventListener('click', async () => {
+    const result = await sendMessage({ type: 'STOP_RECORDING' });
+    showRecordingDone();
+});
+
+// Save Pattern
+savePatternBtn.addEventListener('click', async () => {
+    // Get companyId from dropdown OR from background state (in case popup was reopened)
+    let companyId = recordCompanySelect.value;
+    if (!companyId) {
+        const state = await sendMessage({ type: 'GET_RECORDING_STATE' });
+        companyId = state?.companyId;
+    }
+    if (!companyId) {
+        alert('No carrier selected. Please select a carrier.');
+        return;
+    }
+
+    savePatternBtn.disabled = true;
+    savePatternBtn.textContent = 'Saving...';
+
+    const result = await sendMessage({ type: 'SAVE_PATTERN', companyId });
+    
+    if (result.error) {
+        alert('Failed to save: ' + result.error);
+        savePatternBtn.disabled = false;
+        savePatternBtn.textContent = '💾 Save Pattern';
+        return;
+    }
+
+    alert(`Pattern saved! ${result.stepCount} steps.`);
+    showRecordingIdle();
+    recordStepList.innerHTML = '';
+    loadCarriers(); // Refresh the sync tab
+});
+
+// Discard
+discardPatternBtn.addEventListener('click', () => {
+    if (!confirm('Discard this recording?')) return;
+    sendMessage({ type: 'STOP_RECORDING' });
+    showRecordingIdle();
+    recordStepList.innerHTML = '';
+});
+
+// --- Marker Buttons ---
+markerLoginBtn.addEventListener('click', () => {
+    sendMessage({
+        type: 'INSERT_MARKER',
+        action: 'marker',
+        value: 'POST_LOGIN_START',
+        description: 'Logged-In Start Marker'
+    });
+});
+
+markerDownloadBtn.addEventListener('click', () => {
+    sendMessage({
+        type: 'INSERT_MARKER',
+        action: 'download',
+        value: 'download',
+        description: 'Download Expected'
+    });
+});
+
+markerCookiesBtn.addEventListener('click', () => {
+    sendMessage({
+        type: 'INSERT_MARKER',
+        action: 'save_cookies',
+        value: 'save',
+        description: 'Save Cookies'
+    });
+});
+
+markerEndBtn.addEventListener('click', () => {
+    sendMessage({
+        type: 'INSERT_MARKER',
+        action: 'end_session',
+        value: 'close',
+        description: 'End Flow'
+    });
+});
+
+// --- Recording UI State ---
+function showRecordingActive() {
+    recordStartArea.classList.add('hidden');
+    recordActiveArea.classList.remove('hidden');
+    recordDoneArea.classList.add('hidden');
+    recordCompanySelect.disabled = true;
+    recordStatusBar.className = 'record-status-bar active';
+    recordStatusBar.innerHTML = '<div class="rec-dot"></div> Recording...';
+    startRecordBtn.disabled = false;
+    startRecordBtn.textContent = '⏺ Start Recording';
+}
+
+function showRecordingDone() {
+    recordStartArea.classList.add('hidden');
+    recordActiveArea.classList.add('hidden');
+    recordDoneArea.classList.remove('hidden');
+    recordCompanySelect.disabled = true;
+    recordStatusBar.className = 'record-status-bar idle';
+    recordStatusBar.innerHTML = 'Recording stopped. Save or discard.';
+}
+
+function showRecordingIdle() {
+    recordStartArea.classList.remove('hidden');
+    recordActiveArea.classList.add('hidden');
+    recordDoneArea.classList.add('hidden');
+    recordCompanySelect.disabled = false;
+    recordStatusBar.className = 'record-status-bar idle';
+    recordStatusBar.innerHTML = 'Ready to record';
+    savePatternBtn.disabled = false;
+    savePatternBtn.textContent = '💾 Save Pattern';
+}
+
+function addStepToList(step) {
+    const div = document.createElement('div');
+    const isMarker = step.action === 'marker' || step.action === 'download' || step.action === 'end_session' || step.action === 'save_cookies';
+    div.className = `step-item${isMarker ? ' marker-step' : ''}`;
+    
+    const detail = step.action === 'navigate' 
+        ? step.url 
+        : step.action === 'type' 
+            ? `${step.selector} = ${step.value}` 
+            : step.description || step.selector || step.value || '';
+
+    div.innerHTML = `
+        <div class="step-num">${step.step || ''}</div>
+        <div class="step-action">${step.action}</div>
+        <div class="step-detail" title="${detail}">${detail}</div>
+    `;
+    recordStepList.appendChild(div);
+    recordStepList.scrollTop = recordStepList.scrollHeight;
 }
 
 // --- Helpers ---

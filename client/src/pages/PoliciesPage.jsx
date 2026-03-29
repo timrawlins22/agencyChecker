@@ -16,7 +16,7 @@ export default function PoliciesPage() {
     const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [formData, setFormData] = useState({
         client: '', insuredName: '', carrier: '', policy: '', 
-        status: 'Active', productType: '', faceAmount: '', premium: '', billingFreq: ''
+        status: 'Active', productType: '', faceAmount: '', premium: '', billingFreq: '', writingAgent: '', terminationDate: ''
     });
 
     // Derive unique statuses from the actual loaded data
@@ -57,7 +57,9 @@ export default function PoliciesPage() {
                 product_type: formData.productType,
                 policy_face_amount: formData.faceAmount ? parseFloat(formData.faceAmount) : 0,
                 premium: formData.premium ? parseFloat(formData.premium) : 0,
-                billing_frequency: formData.billingFreq || null
+                billing_frequency: formData.billingFreq || null,
+                writing_agent: formData.writingAgent || null,
+                termination_date: formData.terminationDate || null
             };
             await axios.post('/api/dashboard/policies', payload);
             
@@ -66,7 +68,7 @@ export default function PoliciesPage() {
             setPolicies(res.data.policies);
             
             setShowAddModal(false);
-            setFormData({ client: '', insuredName: '', carrier: '', policy: '', status: 'Active', productType: '', faceAmount: '', premium: '', billingFreq: '' });
+            setFormData({ client: '', insuredName: '', carrier: '', policy: '', status: 'Active', productType: '', faceAmount: '', premium: '', billingFreq: '', writingAgent: '', terminationDate: '' });
         } catch (err) {
             alert(err.response?.data?.error || "Failed to add manual policy");
         }
@@ -172,6 +174,8 @@ export default function PoliciesPage() {
                                 <th className="px-6 py-4 font-semibold tracking-wider">Carrier & Policy</th>
                                 <th className="px-6 py-4 font-semibold tracking-wider">Status</th>
                                 <th className="px-6 py-4 font-semibold tracking-wider">Product</th>
+                                <th className="px-6 py-4 font-semibold tracking-wider">Writing Agent</th>
+                                <th className="px-6 py-4 font-semibold tracking-wider">Term Date</th>
                                 <th className="px-6 py-4 font-semibold tracking-wider text-right">Face Amount</th>
                                 <th className="px-6 py-4 font-semibold tracking-wider text-right">Premium</th>
                                 <th className="px-4 py-4 w-10"></th>
@@ -216,6 +220,12 @@ export default function PoliciesPage() {
                                         <td className="px-6 py-4">
                                             <div className="font-medium text-slate-900 max-w-[200px] truncate">{policy.productName}</div>
                                             <div className="text-xs text-slate-500">{policy.productType !== 'N/A' ? policy.productType : ''}</div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="text-sm text-slate-600">{policy.writingAgent}</div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="text-sm text-slate-600">{policy.terminationDate !== 'N/A' ? policy.terminationDate : '-'}</div>
                                         </td>
                                         <td className="px-6 py-4 text-right font-medium text-slate-900">
                                             ${policy.faceAmount ? policy.faceAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '0'}
@@ -327,6 +337,10 @@ export default function PoliciesPage() {
                                             <p className="text-slate-500 text-xs font-medium mb-0.5">Product Type</p>
                                             <p className="font-semibold text-slate-800">{selectedPolicy.productType}</p>
                                         </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs font-medium mb-0.5">Writing Agent</p>
+                                            <p className="font-semibold text-slate-800">{selectedPolicy.writingAgent}</p>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -360,8 +374,8 @@ export default function PoliciesPage() {
                                                 <p className="font-semibold text-slate-800">{selectedPolicy.date}</p>
                                             </div>
                                             <div>
-                                                <p className="text-slate-500 text-xs font-medium mb-0.5">Effective Date</p>
-                                                <p className="font-semibold text-slate-800">{selectedPolicy.effectiveDate}</p>
+                                                <p className="text-slate-500 text-xs font-medium mb-0.5">Termination Date</p>
+                                                <p className="font-semibold text-slate-800">{selectedPolicy.terminationDate}</p>
                                             </div>
                                             <div className="sm:col-span-4 pt-2 mt-2 border-t border-slate-200 border-dashed flex justify-between items-center">
                                                 <div>
@@ -428,6 +442,14 @@ export default function PoliciesPage() {
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Policy Number *</label>
                                     <input required type="text" value={formData.policy} onChange={e => setFormData({...formData, policy: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500" placeholder="POL-123456" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Writing Agent</label>
+                                    <input type="text" value={formData.writingAgent} onChange={e => setFormData({...formData, writingAgent: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500" placeholder="Agent Name" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Term Date</label>
+                                    <input type="date" value={formData.terminationDate} onChange={e => setFormData({...formData, terminationDate: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500" />
                                 </div>
                             </div>
 

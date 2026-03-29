@@ -35,11 +35,13 @@ const dashboardController = {
                     policy_face_amount,
                     billing_frequency,
                     effective_date,
+                    termination_date,
                     term_duration,
                     payment_method,
                     policy_status AS status,
                     premium,
-                    date_of_issue AS date
+                    date_of_issue AS date,
+                    writing_agent
                 FROM unified_policies
                 WHERE agent_id = ? 
                   AND policy_status IN ('Lapsed', 'Pending Lapse', 'Grace Period')
@@ -103,8 +105,10 @@ const dashboardController = {
                     billingFreq: item.billing_frequency || 'N/A',
                     date: item.date ? new Date(item.date).toLocaleDateString() : 'N/A',
                     effectiveDate: item.effective_date ? new Date(item.effective_date).toLocaleDateString() : 'N/A',
+                    terminationDate: item.termination_date ? new Date(item.termination_date).toLocaleDateString() : 'N/A',
                     termDuration: item.term_duration || 'N/A',
-                    paymentMethod: item.payment_method || 'N/A'
+                    paymentMethod: item.payment_method || 'N/A',
+                    writingAgent: item.writing_agent || 'N/A'
                 })),
 
                 policyStatusBreakdown: statusRows.map(row => ({
@@ -186,11 +190,13 @@ const dashboardController = {
                     policy_face_amount,
                     billing_frequency,
                     effective_date,
+                    termination_date,
                     term_duration,
                     payment_method,
                     policy_status AS status,
                     premium,
-                    date_of_issue AS date
+                    date_of_issue AS date,
+                    writing_agent
                 FROM unified_policies
                 WHERE agent_id = ? 
                 ORDER BY date_of_issue DESC, client ASC;
@@ -211,8 +217,10 @@ const dashboardController = {
                 billingFreq: item.billing_frequency || 'N/A',
                 date: item.date ? new Date(item.date).toLocaleDateString() : 'N/A',
                 effectiveDate: item.effective_date ? new Date(item.effective_date).toLocaleDateString() : 'N/A',
+                terminationDate: item.termination_date ? new Date(item.termination_date).toLocaleDateString() : 'N/A',
                 termDuration: item.term_duration || 'N/A',
-                paymentMethod: item.payment_method || 'N/A'
+                paymentMethod: item.payment_method || 'N/A',
+                writingAgent: item.writing_agent || 'N/A'
             }));
             
             res.json({ policies: formattedPolicies });
@@ -240,7 +248,9 @@ const dashboardController = {
             payment_method,
             date_of_issue,
             effective_date,
-            term_duration
+            termination_date,
+            term_duration,
+            writing_agent
         } = req.body;
 
         if (!policy_number || !carrier || !owner_name) {
@@ -250,14 +260,14 @@ const dashboardController = {
         try {
             await db.execute(`
                 INSERT INTO unified_policies (
-                    policy_number, carrier, agent_id, policy_status, product_type, product_name,
+                    policy_number, carrier, agent_id, writing_agent, policy_status, product_type, product_name,
                     insured_name, insured_birth, owner_name, policy_face_amount, premium,
-                    billing_frequency, date_of_issue, effective_date, term_duration, payment_method
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    billing_frequency, date_of_issue, effective_date, termination_date, term_duration, payment_method
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
-                policy_number, carrier, agentId, policy_status || 'Active', product_type || null, product_name || null,
+                policy_number, carrier, agentId, writing_agent || null, policy_status || 'Active', product_type || null, product_name || null,
                 insured_name || owner_name, insured_birth || null, owner_name, policy_face_amount || 0, premium || 0,
-                billing_frequency || null, date_of_issue || null, effective_date || null, term_duration || null, payment_method || null
+                billing_frequency || null, date_of_issue || null, effective_date || null, termination_date || null, term_duration || null, payment_method || null
             ]);
 
             res.status(201).json({ message: 'Policy manually added to Book of Business successfully.' });

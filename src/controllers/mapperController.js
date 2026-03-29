@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { saveLoginPattern } = require('../../utils/patternStorage');
+const moment = require('moment');
 
 const mapperController = {
 
@@ -182,8 +183,13 @@ const mapperController = {
      * Receives scraped policy data from the Chrome extension and upserts into unified_policies.
      */
     async uploadSyncData(req, res) {
-        const agentId = req.user.sub;
+        const agentId = req.user?.sub;
         const { companyId, tables, pageTitle, url } = req.body;
+
+        if (!agentId) {
+            console.error('[Upload] Missing agentId (req.user.sub)');
+            return res.status(401).json({ error: 'Unauthorized. Missing agent identity.' });
+        }
 
         if (!companyId) {
             return res.status(400).json({ error: 'Missing companyId.' });
@@ -194,6 +200,8 @@ const mapperController = {
         }
 
         try {
+            console.log(`[Upload] Processing ${tables.length} tables for ${companyId} (Agent: ${agentId})`);
+            
             // Get carrier name and custom data_mapping from companies table
             const [companyRows] = await db.execute(
                 'SELECT name, data_mapping FROM companies WHERE company_id = ?',
@@ -219,19 +227,23 @@ const mapperController = {
                     'policy': 'policy_number', 'certificatenbr': 'policy_number', 'certificate': 'policy_number',
                     'contract': 'policy_number', 'contract number': 'policy_number',
                     'status': 'policy_status', 'policy_status': 'policy_status', 'policystatus': 'policy_status',
+                    'current status': 'policy_status', 'currentstatus': 'policy_status', 'policy status': 'policy_status',
                     'product': 'product_name', 'product_name': 'product_name', 'productname': 'product_name',
                     'plan': 'product_name', 'plandescription': 'product_name', 'plan description': 'product_name',
                     'product type': 'product_type', 'producttype': 'product_type', 'productcategory': 'product_type',
                     'insured': 'insured_name', 'insured_name': 'insured_name', 'insuredname': 'insured_name',
                     'name': 'insured_name', 'client': 'insured_name', 'client name': 'insured_name',
                     'owner': 'owner_name', 'owner_name': 'owner_name', 'ownername': 'owner_name',
+                    'writing agent': 'writing_agent', 'writing_agent': 'writing_agent', 'writingagent': 'writing_agent',
+                    'producing agent': 'writing_agent', 'producingagent': 'writing_agent',
                     'face amount': 'policy_face_amount', 'faceamount': 'policy_face_amount',
                     'face_amount': 'policy_face_amount', 'death benefit': 'policy_face_amount',
                     'premium': 'premium', 'annual premium': 'premium', 'annualpremium': 'premium',
                     'basemodalepremium': 'premium', 'modal premium': 'premium',
-                    'effective date': 'effective_date', 'effectivedate': 'effective_date',
-                    'effective_date': 'effective_date', 'issue date': 'date_of_issue',
-                    'issuedate': 'date_of_issue', 'date_of_issue': 'date_of_issue',
+                    'annualized premium': 'premium', 'annualizedpremium': 'premium',
+                    'termination date': 'termination_date', 'termination_date': 'termination_date', 'terminationdate': 'termination_date',
+                    'term date': 'termination_date', 'termdate': 'termination_date',
+                    'issue date': 'date_of_issue', 'issuedate': 'date_of_issue', 'date_of_issue': 'date_of_issue',
                 };
 
                 for (const row of table.rows) {
@@ -252,46 +264,84 @@ const mapperController = {
                         }
                     }
 
+                    // Helper to parse dates into YYYY-MM-DD
+                    const parseDate = (val) => {
+                        if (!val) return null;
+                        // Use moment to parse common formats, including 2-digit years
+                        const m = moment(val, ["MM/DD/YYYY", "M/D/YYYY", "M/D/YY", "MM/DD/YY", "YYYY-MM-DD"], true);
+                        if (!m.isValid()) {
+                            // Try fallback parsing for other formats
+                            const fallback = moment(val);
+                            return fallback.isValid() ? fallback.format('YYYY-MM-DD') : null;
+                        }
+                        return m.format('YYYY-MM-DD');
+                    };
+
                     // Must have at least a policy number
                     if (!mapped.policy_number) continue;
 
-                    // Clean numeric values
+                    // Clean numeric and date values
                     if (mapped.policy_face_amount) {
-                        mapped.policy_face_amount = parseFloat(mapped.policy_face_amount.replace(/[^0-9.-]/g, '')) || null;
+                        mapped.policy_face_amount = parseFloat(String(mapped.policy_face_amount).replace(/[^0-9.-]/g, '')) || null;
                     }
                     if (mapped.premium) {
-                        mapped.premium = parseFloat(mapped.premium.replace(/[^0-9.-]/g, '')) || null;
+                        mapped.premium = parseFloat(String(mapped.premium).replace(/[^0-9.-]/g, '')) || null;
+                    }
+                    if (mapped.insured_birth) {
+                        mapped.insured_birth = parseDate(mapped.insured_birth);
+                    }
+                    if (mapped.effective_date) {
+                        mapped.effective_date = parseDate(mapped.effective_date);
+                    }
+                    if (mapped.date_of_issue) {
+                        mapped.date_of_issue = parseDate(mapped.date_of_issue);
+                    }
+                    if (mapped.termination_date) {
+                        mapped.termination_date = parseDate(mapped.termination_date);
                     }
 
                     // Upsert into unified_policies
                     await db.execute(
                         `INSERT INTO unified_policies 
-                            (policy_number, carrier, agent_id, policy_status, product_type, product_name,
-                             insured_name, owner_name, policy_face_amount, premium, effective_date, date_of_issue)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (policy_number, carrier, agent_id, writing_agent, policy_status, product_type, product_name,
+                             insured_name, insured_birth, owner_name, policy_face_amount, premium, 
+                             billing_frequency, payment_method, term_duration, effective_date, termination_date, date_of_issue)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE
                             carrier = VALUES(carrier), agent_id = VALUES(agent_id),
+                            writing_agent = COALESCE(VALUES(writing_agent), writing_agent),
                             policy_status = COALESCE(VALUES(policy_status), policy_status),
                             product_type = COALESCE(VALUES(product_type), product_type),
                             product_name = COALESCE(VALUES(product_name), product_name),
                             insured_name = COALESCE(VALUES(insured_name), insured_name),
+                            insured_birth = COALESCE(VALUES(insured_birth), insured_birth),
                             owner_name = COALESCE(VALUES(owner_name), owner_name),
                             policy_face_amount = COALESCE(VALUES(policy_face_amount), policy_face_amount),
                             premium = COALESCE(VALUES(premium), premium),
+                            billing_frequency = COALESCE(VALUES(billing_frequency), billing_frequency),
+                            payment_method = COALESCE(VALUES(payment_method), payment_method),
+                            term_duration = COALESCE(VALUES(term_duration), term_duration),
                             effective_date = COALESCE(VALUES(effective_date), effective_date),
+                            termination_date = COALESCE(VALUES(termination_date), termination_date),
                             date_of_issue = COALESCE(VALUES(date_of_issue), date_of_issue)`,
                         [
                             mapped.policy_number,
                             carrierName,
                             agentId,
+                            mapped.writing_agent || null,
                             mapped.policy_status || null,
                             mapped.product_type || null,
                             mapped.product_name || null,
                             mapped.insured_name || null,
+                            mapped.insured_birth || null,
                             mapped.owner_name || null,
                             mapped.policy_face_amount || null,
                             mapped.premium || null,
+                            mapped.billing_frequency || null,
+                            mapped.payment_method || null,
+                            mapped.term_duration || null,
                             mapped.effective_date || null,
+                            mapped.termination_date || null,
                             mapped.date_of_issue || null
                         ]
                     );
@@ -313,7 +363,7 @@ const mapperController = {
 
         } catch (err) {
             console.error('Error uploading sync data:', err);
-            res.status(500).json({ error: 'Failed to process sync data.' });
+            res.status(500).json({ error: 'Failed to process sync data.', details: err.message });
         }
     }
 };

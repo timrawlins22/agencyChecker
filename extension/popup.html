@@ -8,7 +8,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-            width: 360px;
+            width: 380px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: #f8fafc;
             color: #1e293b;
@@ -40,6 +40,33 @@
         }
         .header .status-dot.connected { background: #4ade80; }
         .header .status-dot.disconnected { background: #f87171; }
+
+        /* Tabs */
+        .tab-bar {
+            display: flex;
+            background: white;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 9px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            background: none;
+            border: none;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.15s;
+        }
+        .tab-btn.active {
+            color: #4f46e5;
+            border-bottom-color: #4f46e5;
+        }
+        .tab-btn:hover:not(.active) { color: #64748b; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
 
         /* Login Section */
         .login-section {
@@ -195,6 +222,158 @@
             animation: spin 0.6s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* --- Recording Tab Styles --- */
+        .record-section { padding: 16px 20px; }
+
+        .record-controls {
+            padding: 12px 20px;
+        }
+        .record-controls label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .record-controls select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 12px;
+            outline: none;
+            background: white;
+        }
+        .record-controls select:focus {
+            border-color: #6366f1;
+        }
+
+        .btn-record {
+            background: #dc2626;
+            color: white;
+        }
+        .btn-record:hover { background: #b91c1c; }
+        .btn-record.recording {
+            animation: pulse 1.5s infinite;
+        }
+
+        .btn-stop {
+            background: #374151;
+            color: white;
+        }
+        .btn-stop:hover { background: #1f2937; }
+
+        .btn-save-pattern {
+            background: #059669;
+            color: white;
+        }
+        .btn-save-pattern:hover { background: #047857; }
+
+        .marker-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-top: 12px;
+        }
+        .btn-marker {
+            padding: 7px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            border: 1px solid #e2e8f0;
+            background: white;
+            color: #475569;
+            transition: all 0.15s;
+        }
+        .btn-marker:hover { background: #f1f5f9; }
+        .btn-marker:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Step list */
+        .step-list {
+            max-height: 260px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: white;
+            margin: 12px 20px 16px;
+        }
+        .step-list:empty::before {
+            content: 'No steps captured yet.';
+            display: block;
+            padding: 20px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+        .step-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f8fafc;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .step-item:last-child { border-bottom: none; }
+        .step-num {
+            min-width: 20px;
+            height: 20px;
+            background: #f1f5f9;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 700;
+            color: #64748b;
+        }
+        .step-action {
+            font-weight: 700;
+            color: #4f46e5;
+            font-size: 10px;
+            text-transform: uppercase;
+            min-width: 50px;
+        }
+        .step-detail {
+            color: #64748b;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .step-item.marker-step {
+            background: #fffbeb;
+            border-left: 3px solid #f59e0b;
+        }
+        .step-item.marker-step .step-action { color: #d97706; }
+
+        .record-status-bar {
+            padding: 8px 20px;
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .record-status-bar.active {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+        .record-status-bar.idle {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+        .rec-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #dc2626;
+            animation: pulse 1s infinite;
+        }
     </style>
 </head>
 <body>
@@ -225,16 +404,64 @@
             <button class="btn btn-danger" id="logoutBtn" style="width: auto; padding: 4px 10px; font-size: 11px;">Sign Out</button>
         </div>
 
-        <div class="carrier-section">
-            <div class="section-title">Carrier Sync</div>
-            <div id="carrierList">
-                <p style="font-size: 12px; color: #94a3b8; text-align: center; padding: 16px;">Loading carriers...</p>
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="syncTab">Sync</button>
+            <button class="tab-btn" data-tab="recordTab">Record</button>
+        </div>
+
+        <!-- Sync Tab -->
+        <div id="syncTab" class="tab-content active">
+            <div class="carrier-section">
+                <div class="section-title">Carrier Sync</div>
+                <div id="carrierList">
+                    <p style="font-size: 12px; color: #94a3b8; text-align: center; padding: 16px;">Loading carriers...</p>
+                </div>
+            </div>
+
+            <div class="sync-all-bar">
+                <span id="mappedCount">— carriers mapped</span>
+                <button class="btn btn-primary" id="syncAllBtn" style="width: auto; padding: 6px 14px;">Sync All</button>
             </div>
         </div>
 
-        <div class="sync-all-bar">
-            <span id="mappedCount">— carriers mapped</span>
-            <button class="btn btn-primary" id="syncAllBtn" style="width: auto; padding: 6px 14px;">Sync All</button>
+        <!-- Record Tab -->
+        <div id="recordTab" class="tab-content">
+            <div class="record-controls">
+                <label>Carrier</label>
+                <select id="recordCompanySelect">
+                    <option value="">Select a carrier...</option>
+                </select>
+
+                <div id="recordStartArea">
+                    <button class="btn btn-record" id="startRecordBtn">⏺ Start Recording</button>
+                    <p style="font-size: 10px; color: #94a3b8; margin-top: 6px; text-align: center;">
+                        Navigate to the carrier portal first, then click Start Recording.
+                    </p>
+                </div>
+
+                <div id="recordActiveArea" class="hidden">
+                    <button class="btn btn-stop" id="stopRecordBtn">⏹ Stop Recording</button>
+
+                    <div class="marker-buttons">
+                        <button class="btn-marker" id="markerLoginBtn">🔑 Post-Login Marker</button>
+                        <button class="btn-marker" id="markerDownloadBtn">⬇️ Download Expected</button>
+                        <button class="btn-marker" id="markerCookiesBtn">🍪 Save Cookies</button>
+                        <button class="btn-marker" id="markerEndBtn">🛑 End Flow</button>
+                    </div>
+                </div>
+
+                <div id="recordDoneArea" class="hidden">
+                    <button class="btn btn-save-pattern" id="savePatternBtn">💾 Save Pattern</button>
+                    <button class="btn btn-secondary" id="discardPatternBtn" style="margin-top: 6px;">Discard</button>
+                </div>
+            </div>
+
+            <div id="recordStatusBar" class="record-status-bar idle">
+                <span>Ready to record</span>
+            </div>
+
+            <div id="recordStepList" class="step-list"></div>
         </div>
     </div>
 

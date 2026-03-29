@@ -47,8 +47,8 @@ export default function MapperPage() {
 
     const dbFields = [
         'policy_number', 'policy_status', 'product_name', 'product_type', 
-        'insured_name', 'owner_name', 'policy_face_amount', 'premium', 
-        'effective_date', 'date_of_issue'
+        'insured_name', 'insured_birth', 'owner_name', 'writing_agent', 'policy_face_amount', 'premium', 
+        'billing_frequency', 'payment_method', 'term_duration', 'effective_date', 'termination_date', 'date_of_issue'
     ];
 
     const { connected, emit, on, off } = useSocket();

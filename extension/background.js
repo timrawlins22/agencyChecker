@@ -22,6 +22,25 @@ async function getConfig() {
 }
 
 /**
+ * Setup offscreen document for fetch proxying
+ */
+let creatingOffscreen;
+async function setupOffscreenDocument(path) {
+    if (await chrome.offscreen.hasDocument()) return;
+    if (creatingOffscreen) {
+        await creatingOffscreen;
+    } else {
+        creatingOffscreen = chrome.offscreen.createDocument({
+            url: path,
+            reasons: ['DOM_PARSER'],
+            justification: 'Fetch API requests to handle self-signed certificates'
+        });
+        await creatingOffscreen;
+        creatingOffscreen = null;
+    }
+}
+
+/**
  * Make an authenticated API request
  */
 async function apiRequest(path, options = {}) {
@@ -37,14 +56,28 @@ async function apiRequest(path, options = {}) {
         ...(options.headers || {})
     };
 
-    const response = await fetch(url, { ...options, headers });
-    
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(error.error || `API request failed: ${response.status}`);
-    }
+    await setupOffscreenDocument('offscreen.html');
 
-    return response.json();
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+            type: 'FETCH_PROXY',
+            url: url,
+            options: { ...options, headers }
+        }, response => {
+            if (chrome.runtime.lastError) {
+                return reject(new Error(chrome.runtime.lastError.message));
+            }
+            if (!response) {
+                return reject(new Error('No response from offscreen document'));
+            }
+            if (!response.ok) {
+                // Extract error message from the API response body if available
+                const errMsg = (response.data && response.data.error) || response.error || `API request failed: ${response.status} ${response.statusText}`;
+                return reject(new Error(errMsg));
+            }
+            resolve(response.data);
+        });
+    });
 }
 
 /**
@@ -85,6 +118,40 @@ function updateSyncState(companyId, status, message = '', progress = 0) {
 }
 
 /**
+ * Inject content script and verify it's alive via PING
+ */
+async function injectAndPing(tabId, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['content.js']
+            });
+        } catch (e) {
+            console.warn(`[Sync] Injection attempt ${i + 1} failed:`, e.message);
+            if (i === maxRetries - 1) throw new Error(`Cannot inject content script: ${e.message}`);
+            await sleep(2000);
+            continue;
+        }
+
+        await sleep(500);
+
+        // Verify with PING
+        try {
+            const resp = await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+            if (resp && resp.pong) {
+                console.log(`[Sync] Content script alive on: ${resp.url}`);
+                return true;
+            }
+        } catch (e) {
+            console.warn(`[Sync] PING failed, retrying... (attempt ${i + 1})`);
+            await sleep(2000);
+        }
+    }
+    throw new Error('Content script not responding after injection.');
+}
+
+/**
  * Main sync function for a single carrier
  */
 async function syncCarrier(companyId) {
@@ -110,18 +177,15 @@ async function syncCarrier(companyId) {
         }
 
         // 3. Find the POST_LOGIN_START marker to determine which steps to skip
-        //    (Agent is already logged in via their browser cookies)
         const markerIndex = steps.findIndex(
             s => s.action === 'marker' && s.value === 'POST_LOGIN_START'
         );
 
-        // If there's a marker, skip login steps and go to the post-login URL
         let startIndex = 0;
         let startUrl = navigateStep.url;
 
         if (markerIndex !== -1) {
             startIndex = markerIndex + 1;
-            // Use the URL from the step right before the marker
             const preMarkerStep = steps[markerIndex - 1];
             if (preMarkerStep && preMarkerStep.url) {
                 startUrl = preMarkerStep.url;
@@ -132,41 +196,101 @@ async function syncCarrier(companyId) {
         const tab = await chrome.tabs.create({ url: startUrl, active: false });
         tabId = tab.id;
 
-        // Wait for the tab to fully load
         await waitForTabLoad(tabId);
-        await sleep(2000); // Extra buffer for JS-heavy pages
+        await sleep(2000);
 
         updateSyncState(companyId, 'running', 'Executing steps...', 30);
 
-        // 5. Inject and execute the content script
-        await chrome.scripting.executeScript({
-            target: { tabId },
-            files: ['content.js']
-        });
+        // 5. Inject content script and verify it's alive
+        await injectAndPing(tabId);
 
-        // 6. Send the steps to the content script
+        // 6. Execute steps ONE BY ONE from the background
         const postLoginSteps = steps.slice(startIndex).filter(s => s.action !== 'marker');
-        
-        const result = await chrome.tabs.sendMessage(tabId, {
-            type: 'EXECUTE_STEPS',
-            steps: postLoginSteps,
-            companyId: companyId
-        });
+        let allScraped = [];
 
-        updateSyncState(companyId, 'uploading', 'Uploading data...', 80);
+        for (let i = 0; i < postLoginSteps.length; i++) {
+            const step = postLoginSteps[i];
+            const progress = 30 + Math.round((i / postLoginSteps.length) * 50);
+            updateSyncState(companyId, 'running', `Step ${i + 1}/${postLoginSteps.length}: ${step.action}`, progress);
 
-        // 7. Upload scraped data to the backend
-        if (result && result.data) {
-            await uploadSyncData(companyId, result.data);
+            if (step.action === 'end_session') break;
+
+            if (step.action === 'navigate') {
+                // Background handles navigation directly
+                await chrome.tabs.update(tabId, { url: step.url });
+                await waitForTabLoad(tabId);
+                await sleep(2000);
+                // Re-inject content script after navigation
+                await injectAndPing(tabId);
+                continue;
+            }
+
+            // Send single step to content script
+            let result;
+            try {
+                result = await chrome.tabs.sendMessage(tabId, {
+                    type: 'EXECUTE_STEP',
+                    step: step
+                });
+            } catch (msgErr) {
+                // Content script may have been destroyed by a click that caused navigation
+                console.warn(`[Sync] Step ${i + 1} message failed, re-injecting...`, msgErr.message);
+                await waitForTabLoad(tabId);
+                await sleep(2000);
+                await injectAndPing(tabId);
+
+                // Retry the step
+                try {
+                    result = await chrome.tabs.sendMessage(tabId, {
+                        type: 'EXECUTE_STEP',
+                        step: step
+                    });
+                } catch (retryErr) {
+                    throw new Error(`Step ${i + 1} (${step.action}) failed after re-injection: ${retryErr.message}`);
+                }
+            }
+
+            if (!result || !result.success) {
+                throw new Error(`Step ${i + 1} (${step.action}) failed: ${result?.error || 'Unknown error'}`);
+            }
+
+            // Collect scraped data from download steps
+            if (result.scraped) {
+                allScraped.push(...result.scraped);
+            }
         }
 
-        updateSyncState(companyId, 'success', `Synced successfully!`, 100);
+        // 7. Final scrape attempt if no download step captured data
+        if (allScraped.length === 0) {
+            try {
+                await injectAndPing(tabId);
+                const scrapeResult = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_TABLES' });
+                if (scrapeResult && scrapeResult.scraped) {
+                    allScraped = scrapeResult.scraped;
+                }
+            } catch (e) {
+                console.warn('[Sync] Final scrape failed:', e.message);
+            }
+        }
+
+        // 8. Upload scraped data if we have any
+        if (allScraped.length > 0) {
+            updateSyncState(companyId, 'uploading', 'Uploading data...', 80);
+            await uploadSyncData(companyId, {
+                tables: allScraped,
+                pageTitle: '',
+                url: startUrl
+            });
+            const totalRows = allScraped.reduce((sum, t) => sum + t.rows.length, 0);
+            updateSyncState(companyId, 'success', `Synced ${totalRows} rows!`, 100);
+        } else {
+            updateSyncState(companyId, 'success', 'Steps completed (no table data found).', 100);
+        }
 
     } catch (error) {
         console.error(`[Sync] Failed for ${companyId}:`, error);
         updateSyncState(companyId, 'error', error.message);
     } finally {
-        // 8. Close the background tab
         if (tabId) {
             try { await chrome.tabs.remove(tabId); } catch (e) { /* already closed */ }
         }
@@ -289,6 +413,137 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'GET_CONFIG':
             getConfig().then(config => sendResponse(config));
             return true;
+
+        // --- Recording Handlers ---
+        case 'START_RECORDING':
+            (async () => {
+                try {
+                    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                    if (!tab) throw new Error('No active tab found.');
+                    
+                    recordingState = {
+                        active: true,
+                        tabId: tab.id,
+                        companyId: message.companyId,
+                        steps: [{
+                            action: 'navigate',
+                            url: tab.url,
+                            description: `Navigate to ${tab.url}`,
+                            delay: 0
+                        }]
+                    };
+
+                    await chrome.scripting.executeScript({
+                        target: { tabId: tab.id },
+                        files: ['recorder.js']
+                    });
+
+                    sendResponse({ success: true, step: recordingState.steps[0] });
+                } catch (err) {
+                    sendResponse({ error: err.message });
+                }
+            })();
+            return true;
+
+        case 'STOP_RECORDING':
+            if (recordingState.active) {
+                recordingState.active = false;
+                // Remove recorder from tab
+                try {
+                    chrome.scripting.executeScript({
+                        target: { tabId: recordingState.tabId },
+                        func: () => { window.__agentPortalRecorderActive = false; }
+                    }).catch(() => {});
+                } catch (e) {}
+            }
+            sendResponse({ steps: recordingState.steps });
+            break;
+
+        case 'RECORD_STEP':
+            if (recordingState.active && message.step) {
+                message.step.step = recordingState.steps.length + 1;
+                recordingState.steps.push(message.step);
+                // Relay to popup
+                chrome.runtime.sendMessage({
+                    type: 'NEW_RECORDED_STEP',
+                    step: message.step
+                }).catch(() => {});
+            }
+            sendResponse({ received: true });
+            break;
+
+        case 'RECORDER_READY':
+            sendResponse({ received: true });
+            break;
+
+        case 'INSERT_MARKER': {
+            if (!recordingState.active) {
+                sendResponse({ error: 'Not recording.' });
+                break;
+            }
+            const markerStep = {
+                step: recordingState.steps.length + 1,
+                action: message.action || 'marker',
+                value: message.value || 'POST_LOGIN_START',
+                url: recordingState.steps[recordingState.steps.length - 1]?.url || '',
+                description: message.description || 'Marker step',
+                delay: 0
+            };
+            recordingState.steps.push(markerStep);
+            // Relay to popup
+            chrome.runtime.sendMessage({
+                type: 'NEW_RECORDED_STEP',
+                step: markerStep
+            }).catch(() => {});
+            sendResponse({ success: true, step: markerStep });
+            break;
+        }
+
+        case 'GET_RECORDING_STATE':
+            sendResponse({
+                active: recordingState.active,
+                steps: recordingState.steps,
+                companyId: recordingState.companyId
+            });
+            return false;
+
+        case 'SAVE_PATTERN':
+            (async () => {
+                try {
+                    const steps = recordingState.steps.filter(s => s && s.action);
+                    await apiRequest(`/api/mapper/patterns/${message.companyId}`, {
+                        method: 'POST',
+                        body: JSON.stringify({ steps })
+                    });
+                    recordingState = { active: false, tabId: null, companyId: null, steps: [] };
+                    sendResponse({ success: true, stepCount: steps.length });
+                } catch (err) {
+                    sendResponse({ error: err.message });
+                }
+            })();
+            return true;
+    }
+});
+
+// --- Recording State ---
+let recordingState = { active: false, tabId: null, companyId: null, steps: [] };
+
+// Re-inject recorder when the recording tab navigates
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (
+        recordingState.active &&
+        tabId === recordingState.tabId &&
+        changeInfo.status === 'complete'
+    ) {
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['recorder.js']
+            });
+            console.log('[Recorder] Re-injected after navigation to', tab.url);
+        } catch (e) {
+            console.warn('[Recorder] Failed to re-inject:', e.message);
+        }
     }
 });
 
