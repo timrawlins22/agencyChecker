@@ -9,7 +9,8 @@ import {
     CheckCircle,
     XCircle,
     Clock,
-    Briefcase
+    Briefcase,
+    CloudDownload
 } from 'lucide-react';
 import { 
     ResponsiveContainer, PieChart, Pie, Cell, 
@@ -47,6 +48,9 @@ export default function DashboardPage() {
     
     // Policy Details Modal State
     const [selectedActionItem, setSelectedActionItem] = useState(null);
+    
+    // Sync Prompt Modal State
+    const [syncPromptCarrier, setSyncPromptCarrier] = useState(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -237,7 +241,16 @@ export default function DashboardPage() {
                                                 <div className="text-xs text-slate-500">Last Synced: {job.lastRun}</div>
                                             </div>
                                         </div>
-                                        <StatusBadge status={job.status} />
+                                        <div className="flex items-center gap-3">
+                                            <StatusBadge status={job.status} />
+                                            <button 
+                                                onClick={() => setSyncPromptCarrier(job.carrier)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-primary-600 rounded-lg hover:bg-primary-50 hover:border-primary-200 transition-colors shadow-sm"
+                                            >
+                                                <CloudDownload className="w-3.5 h-3.5" />
+                                                Sync Now
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -382,25 +395,85 @@ export default function DashboardPage() {
                                 </div>
                             </div>
 
-                            {/* Client Info Grid */}
-                            <div>
-                                <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Client Information</h4>
-                                <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
-                                    <div>
-                                        <p className="text-slate-500">Owner Name</p>
-                                        <p className="font-semibold text-slate-900">{selectedActionItem.client}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Client & Owner Info */}
+                                <div>
+                                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Client Information</h4>
+                                    <div className="space-y-3 text-sm">
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Owner Name</p>
+                                            <p className="font-semibold text-slate-900">{selectedActionItem.client}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Insured Name</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.insuredName || 'Same as Owner'}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Insured Birth Date</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.insuredBirth}</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <p className="text-slate-500">Date of Issue</p>
-                                        <p className="font-medium text-slate-900">{selectedActionItem.date}</p>
+                                </div>
+
+                                {/* Policy Info */}
+                                <div>
+                                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Policy Details</h4>
+                                    <div className="space-y-3 text-sm">
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <p className="text-slate-500 text-xs">Carrier</p>
+                                                <p className="font-medium text-slate-900">{selectedActionItem.carrier}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-slate-500 text-xs">Policy Number</p>
+                                                <p className="font-mono font-medium text-slate-900">{selectedActionItem.policy}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <p className="text-slate-500 text-xs">Product Type</p>
+                                                <p className="font-medium text-slate-900">{selectedActionItem.productType}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-slate-500 text-xs">Product Name</p>
+                                                <p className="font-medium text-slate-900">{selectedActionItem.productName}</p>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <p className="text-slate-500">Carrier</p>
-                                        <p className="font-medium text-slate-900">{selectedActionItem.carrier}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-slate-500">Policy Number</p>
-                                        <p className="font-mono font-medium text-slate-900">{selectedActionItem.policy}</p>
+                                </div>
+
+                                {/* Coverage Grid */}
+                                <div className="md:col-span-2">
+                                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Coverage & Economics</h4>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-4 gap-x-6 text-sm">
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Face Amount</p>
+                                            <p className="font-bold text-slate-900">${selectedActionItem.faceAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Premium</p>
+                                            <p className="font-bold text-slate-900">${selectedActionItem.premium.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Billing Freq</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.billingFreq}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Method</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.paymentMethod}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Issue Date</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.date}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500 text-xs">Effective Date</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.effectiveDate}</p>
+                                        </div>
+                                        <div className="sm:col-span-2">
+                                            <p className="text-slate-500 text-xs">Term Duration</p>
+                                            <p className="font-medium text-slate-900">{selectedActionItem.termDuration}</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -420,6 +493,37 @@ export default function DashboardPage() {
                             >
                                 Call Client
                             </a>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Sync Prompt Modal */}
+            {syncPromptCarrier && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                        <div className="p-6">
+                            <div className="w-12 h-12 rounded-full bg-primary-50 flex items-center justify-center mb-4">
+                                <CloudDownload className="h-6 w-6 text-primary-600" />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">Sync {syncPromptCarrier}</h3>
+                            <p className="text-slate-500 text-sm leading-relaxed mb-6">
+                                To synchronize data for this carrier, please open your AgentPortal Chrome Extension.
+                            </p>
+                            <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 mb-6">
+                                <ol className="list-decimal list-outside ml-4 space-y-2 text-sm text-slate-700 font-medium">
+                                    <li>Click the AgentPortal icon in your browser toolbar</li>
+                                    <li>Ensure you are logged in</li>
+                                    <li>Find <span className="text-primary-600">{syncPromptCarrier}</span> in your list</li>
+                                    <li>Click <strong>Sync</strong> to start the secure data transfer</li>
+                                </ol>
+                            </div>
+                            <button 
+                                onClick={() => setSyncPromptCarrier(null)}
+                                className="w-full py-2.5 bg-primary-600 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-primary-700 transition-colors"
+                            >
+                                Got it
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -14,5 +14,9 @@ router.get('/summary', dashboardController.getDashboardSummary);
 // 2. Endpoint for detailed carrier job status (for the sidebar)
 router.get('/jobs', dashboardController.getJobStatus); 
 
-// The frontend will hit /api/dashboard/summary and /api/dashboard/jobs
+// 3. Endpoints for the full CRM Book of Business
+router.get('/policies', dashboardController.getAllPolicies);
+router.post('/policies', dashboardController.createPolicy);
+
+// The frontend will hit /api/dashboard/summary, /api/dashboard/jobs, and /api/dashboard/policies
 module.exports = router;

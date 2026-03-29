@@ -13,7 +13,11 @@ router.get('/companies', mapperController.getCompanies);
 router.get('/patterns', mapperController.getPatterns);
 router.get('/patterns/:companyId', mapperController.getPatternByCompany);
 router.post('/patterns/:companyId', mapperController.savePattern);
+router.put('/patterns/:companyId', mapperController.updatePattern);
 router.delete('/patterns/:companyId', mapperController.deletePattern);
+
+// Custom Data Mapping
+router.put('/companies/:companyId/mapping', mapperController.updateMapping);
 
 // Sync data upload (from Chrome extension)
 router.post('/sync/upload', mapperController.uploadSyncData);

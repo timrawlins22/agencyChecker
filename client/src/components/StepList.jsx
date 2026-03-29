@@ -24,8 +24,9 @@ const actionConfig = {
 
 /**
  * StepList - Displays the list of recorded steps with icons and metadata.
+ * Supports an editing mode to modify step parameters (url, selector, value, etc).
  */
-export default function StepList({ steps, title = 'Recorded Steps' }) {
+export default function StepList({ steps, title = 'Recorded Steps', isEditing = false, onStepChange = null }) {
     if (!steps || steps.length === 0) {
         return (
             <div className="text-center py-8">
@@ -65,24 +66,80 @@ export default function StepList({ steps, title = 'Recorded Steps' }) {
                             </div>
 
                             {/* Step details */}
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-slate-700">{config.label}</span>
-                                    {isCredential && (
-                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                                            CREDENTIAL
-                                        </span>
+                            {isEditing ? (
+                                <div className="flex-1 min-w-0 space-y-1.5 bg-white p-2 rounded border border-primary-100 shadow-sm">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs font-semibold text-slate-700">{config.label}</span>
+                                    </div>
+                                    {step.url !== undefined && (
+                                        <input 
+                                            className="w-full text-xs p-1.5 border border-slate-200 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none" 
+                                            value={step.url || ''} 
+                                            onChange={e => onStepChange && onStepChange(idx, 'url', e.target.value)} 
+                                            placeholder="URL"
+                                        />
+                                    )}
+                                    {step.selector !== undefined && (
+                                         <input 
+                                            className="w-full text-xs p-1.5 border border-slate-200 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none font-mono" 
+                                            value={step.selector || ''} 
+                                            onChange={e => onStepChange && onStepChange(idx, 'selector', e.target.value)}
+                                            placeholder="CSS Selector"
+                                        />
+                                    )}
+                                    {step.value !== undefined && (
+                                         <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-slate-400 font-mono">Val:</span>
+                                            <input 
+                                                className="flex-1 text-xs p-1.5 border border-slate-200 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none font-mono" 
+                                                value={step.value || ''} 
+                                                onChange={e => onStepChange && onStepChange(idx, 'value', e.target.value)}
+                                                placeholder="Input Value"
+                                            />
+                                         </div>
+                                    )}
+                                    {step.text !== undefined && step.value === undefined && (
+                                         <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-slate-400 font-mono">Txt:</span>
+                                            <input 
+                                                className="flex-1 text-xs p-1.5 border border-slate-200 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none font-mono" 
+                                                value={step.text || ''} 
+                                                onChange={e => onStepChange && onStepChange(idx, 'text', e.target.value)}
+                                                placeholder="Text to Type"
+                                            />
+                                         </div>
+                                    )}
+                                    {/* Small inputs for wait times/delays if agent wants to tweak them */}
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <label className="text-[10px] text-slate-500">Delay (ms)</label>
+                                        <input 
+                                            type="number"
+                                            className="w-20 text-xs p-1 border border-slate-200 rounded outline-none" 
+                                            value={step.delay || 0} 
+                                            onChange={e => onStepChange && onStepChange(idx, 'delay', parseInt(e.target.value, 10))}
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-semibold text-slate-700">{config.label}</span>
+                                        {isCredential && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                                                CREDENTIAL
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 truncate mt-0.5">
+                                        {step.description || step.selector || step.url || step.text || '—'}
+                                    </p>
+                                    {step.value && !isCredential && step.action === 'type' && (
+                                        <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                                            <ChevronRight className="w-2.5 h-2.5 inline" /> {step.value}
+                                        </p>
                                     )}
                                 </div>
-                                <p className="text-xs text-slate-500 truncate mt-0.5">
-                                    {step.description || step.selector || step.url || step.text || '—'}
-                                </p>
-                                {step.value && !isCredential && step.action === 'type' && (
-                                    <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
-                                        <ChevronRight className="w-2.5 h-2.5 inline" /> {step.value}
-                                    </p>
-                                )}
-                            </div>
+                            )}
 
                             {/* Delay badge */}
                             {step.delay > 0 && (

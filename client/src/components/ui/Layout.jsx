@@ -1,6 +1,6 @@
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate, Link, useLocation } from "react-router-dom";
-import { LogOut, Activity, Shield, Map } from "lucide-react"; // Added Shield
+import { LogOut, Activity, Shield, Map, Briefcase } from "lucide-react";
 import { Button } from "./Button";
 import { cn } from "../../lib/utils"; // Assuming cn utility is available here or needs to be added
 
@@ -17,6 +17,7 @@ export function Layout({ children }) {
     // Added navItems
     const navItems = [
         { label: "Dashboard", path: "/dashboard", icon: Activity },
+        { label: "Policies", path: "/policies", icon: Briefcase },
         { label: "Credentials", path: "/credentials", icon: Shield },
         { label: "Mapper", path: "/mapper", icon: Map },
     ];

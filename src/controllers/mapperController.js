@@ -123,6 +123,38 @@ const mapperController = {
     },
 
     /**
+     * PUT /api/mapper/patterns/:companyId
+     * Update an existing pattern (alias for savePattern since it upserts)
+     */
+    async updatePattern(req, res) {
+        return mapperController.savePattern(req, res);
+    },
+
+    /**
+     * PUT /api/mapper/companies/:companyId/mapping
+     * Saves custom CSV/Table column mappings for a specific carrier.
+     */
+    async updateMapping(req, res) {
+        const { companyId } = req.params;
+        const { mapping } = req.body;
+
+        if (!mapping || typeof mapping !== 'object') {
+            return res.status(400).json({ error: "Mapping JSON object is required." });
+        }
+
+        try {
+            await db.execute(
+                `UPDATE companies SET data_mapping = ? WHERE company_id = ?`,
+                [JSON.stringify(mapping), companyId]
+            );
+            res.json({ message: "Mapping updated successfully.", companyId });
+        } catch (err) {
+            console.error("Error updating mapping:", err);
+            res.status(500).json({ error: "Failed to update custom data mapping." });
+        }
+    },
+
+    /**
      * GET /api/mapper/companies
      * Lists all companies available for pattern mapping
      */
@@ -132,6 +164,7 @@ const mapperController = {
                 SELECT 
                     c.company_id AS id,
                     c.name,
+                    c.data_mapping AS dataMapping,
                     lp.id IS NOT NULL AS hasPattern
                 FROM companies c
                 LEFT JOIN login_patterns lp ON lp.agent_company_id = c.company_id
@@ -161,40 +194,41 @@ const mapperController = {
         }
 
         try {
-            // Get carrier name from companies table
+            // Get carrier name and custom data_mapping from companies table
             const [companyRows] = await db.execute(
-                'SELECT name FROM companies WHERE company_id = ?',
+                'SELECT name, data_mapping FROM companies WHERE company_id = ?',
                 [companyId]
             );
             const carrierName = companyRows[0]?.name || companyId;
+            const customMappingStr = companyRows[0]?.data_mapping || null;
+            
+            let customMapping = {};
+            if (customMappingStr) {
+                try { customMapping = typeof customMappingStr === 'string' ? JSON.parse(customMappingStr) : customMappingStr; } 
+                catch (e) { console.warn('Failed to parse data_mapping for', companyId); }
+            }
 
             let insertedCount = 0;
 
             for (const table of tables) {
                 if (!table.rows || table.rows.length === 0) continue;
 
-                // Column name mapping — maps common carrier portal column names to unified_policies fields
-                const columnMap = {
-                    // Policy number
+                // Column name mapping — generic fallback
+                const fallbackMap = {
                     'policy_number': 'policy_number', 'policynumber': 'policy_number', 'policy #': 'policy_number',
                     'policy': 'policy_number', 'certificatenbr': 'policy_number', 'certificate': 'policy_number',
                     'contract': 'policy_number', 'contract number': 'policy_number',
-                    // Status
                     'status': 'policy_status', 'policy_status': 'policy_status', 'policystatus': 'policy_status',
-                    // Product
                     'product': 'product_name', 'product_name': 'product_name', 'productname': 'product_name',
                     'plan': 'product_name', 'plandescription': 'product_name', 'plan description': 'product_name',
                     'product type': 'product_type', 'producttype': 'product_type', 'productcategory': 'product_type',
-                    // Names
                     'insured': 'insured_name', 'insured_name': 'insured_name', 'insuredname': 'insured_name',
                     'name': 'insured_name', 'client': 'insured_name', 'client name': 'insured_name',
                     'owner': 'owner_name', 'owner_name': 'owner_name', 'ownername': 'owner_name',
-                    // Amounts
                     'face amount': 'policy_face_amount', 'faceamount': 'policy_face_amount',
                     'face_amount': 'policy_face_amount', 'death benefit': 'policy_face_amount',
                     'premium': 'premium', 'annual premium': 'premium', 'annualpremium': 'premium',
                     'basemodalepremium': 'premium', 'modal premium': 'premium',
-                    // Dates
                     'effective date': 'effective_date', 'effectivedate': 'effective_date',
                     'effective_date': 'effective_date', 'issue date': 'date_of_issue',
                     'issuedate': 'date_of_issue', 'date_of_issue': 'date_of_issue',
@@ -204,8 +238,15 @@ const mapperController = {
                     // Map row keys to unified_policies columns
                     const mapped = {};
                     for (const [key, value] of Object.entries(row)) {
-                        const normalizedKey = key.toLowerCase().trim();
-                        const unifiedCol = columnMap[normalizedKey];
+                        const exactKey = key.trim();
+                        const normalizedKey = exactKey.toLowerCase();
+                        
+                        // Database Lookup Rules:
+                        // 1. Exact custom mapping (e.g. "Cert Number")
+                        // 2. Normalized custom mapping (e.g. "cert number")
+                        // 3. Fallback generic mapping
+                        const unifiedCol = customMapping[exactKey] || customMapping[normalizedKey] || fallbackMap[normalizedKey];
+                        
                         if (unifiedCol && value && value.trim() !== '') {
                             mapped[unifiedCol] = value.trim();
                         }
@@ -257,6 +298,12 @@ const mapperController = {
                     insertedCount++;
                 }
             }
+
+            // Insert sync job to record that this carrier was successfully updated
+            await db.execute(`
+                INSERT INTO jobs (agent_id, company_id, run_date, status, start_time, end_time)
+                VALUES (?, ?, CURDATE(), 'SUCCESS', NOW(), NOW())
+            `, [agentId, companyId]);
 
             res.json({ 
                 message: `Sync complete. ${insertedCount} policies processed.`,
