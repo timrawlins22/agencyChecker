@@ -28,6 +28,15 @@ const dashboardController = {
                     policy_number AS policy, 
                     carrier, 
                     owner_name AS client, 
+                    insured_name,
+                    insured_birth,
+                    product_type,
+                    product_name,
+                    policy_face_amount,
+                    billing_frequency,
+                    effective_date,
+                    term_duration,
+                    payment_method,
                     policy_status AS status,
                     premium,
                     date_of_issue AS date
@@ -81,12 +90,21 @@ const dashboardController = {
                 
                 actionItems: actionRows.map(item => ({
                     id: item.id,
-                    type: item.status, // e.g., 'Lapsed', 'Grace Period'
+                    type: item.status, 
                     policy: item.policy,
                     carrier: item.carrier,
-                    client: item.client,
+                    client: item.client || item.insured_name || 'Unknown',
+                    insuredName: item.insured_name,
+                    insuredBirth: item.insured_birth ? new Date(item.insured_birth).toLocaleDateString() : 'N/A',
+                    productType: item.product_type || 'N/A',
+                    productName: item.product_name || 'N/A',
+                    faceAmount: parseFloat(item.policy_face_amount || 0),
                     premium: parseFloat(item.premium || 0),
+                    billingFreq: item.billing_frequency || 'N/A',
                     date: item.date ? new Date(item.date).toLocaleDateString() : 'N/A',
+                    effectiveDate: item.effective_date ? new Date(item.effective_date).toLocaleDateString() : 'N/A',
+                    termDuration: item.term_duration || 'N/A',
+                    paymentMethod: item.payment_method || 'N/A'
                 })),
 
                 policyStatusBreakdown: statusRows.map(row => ({
@@ -115,28 +133,32 @@ const dashboardController = {
         const agentId = req.user.sub;
         
         try {
-            // This complex query gets the LAST job run for each company for the agent
+            // Get the LAST job run for each company for the agent, or NULL if none
             const [jobRows] = await db.execute(`
                 SELECT 
                     c.name AS carrier,
+                    c.company_id AS id,
                     j.status,
                     j.end_time
-                FROM jobs j
-                JOIN companies c ON j.company_id = c.company_id
-                WHERE j.job_id IN (
-                    SELECT MAX(job_id)
+                FROM companies c
+                LEFT JOIN (
+                    SELECT company_id, status, end_time
                     FROM jobs
-                    WHERE agent_id = ?
-                    GROUP BY company_id
-                )
-                ORDER BY j.end_time DESC;
+                    WHERE job_id IN (
+                        SELECT MAX(job_id)
+                        FROM jobs
+                        WHERE agent_id = ?
+                        GROUP BY company_id
+                    )
+                ) j ON c.company_id = j.company_id
+                ORDER BY j.end_time DESC, c.name ASC;
             `, [agentId]);
             
             // Map the database results to the frontend's expected format
             const carrierStatus = jobRows.map(row => ({
                 carrier: row.carrier,
                 lastRun: row.end_time ? new Date(row.end_time).toLocaleString() : 'Never Run',
-                status: row.status, // Should match 'SUCCESS', 'MFA_WAIT', 'FAILED'
+                status: row.status || 'PENDING', // PENDING serves as the default empty state
             }));
             
             res.json({ carrierStatus });
@@ -144,6 +166,108 @@ const dashboardController = {
         } catch (err) {
             console.error("Error fetching job status:", err);
             res.status(500).json({ error: 'Failed to fetch job status' });
+        }
+    },
+
+    async getAllPolicies(req, res) {
+        const agentId = req.user.sub;
+        
+        try {
+            const [policyRows] = await db.execute(`
+                SELECT 
+                    id, 
+                    policy_number AS policy, 
+                    carrier, 
+                    owner_name AS client, 
+                    insured_name,
+                    insured_birth,
+                    product_type,
+                    product_name,
+                    policy_face_amount,
+                    billing_frequency,
+                    effective_date,
+                    term_duration,
+                    payment_method,
+                    policy_status AS status,
+                    premium,
+                    date_of_issue AS date
+                FROM unified_policies
+                WHERE agent_id = ? 
+                ORDER BY date_of_issue DESC, client ASC;
+            `, [agentId]);
+            
+            const formattedPolicies = policyRows.map(item => ({
+                id: item.id,
+                type: item.status, 
+                policy: item.policy,
+                carrier: item.carrier,
+                client: item.client || item.insured_name || 'Unknown',
+                insuredName: item.insured_name,
+                insuredBirth: item.insured_birth ? new Date(item.insured_birth).toLocaleDateString() : 'N/A',
+                productType: item.product_type || 'N/A',
+                productName: item.product_name || 'N/A',
+                faceAmount: parseFloat(item.policy_face_amount || 0),
+                premium: parseFloat(item.premium || 0),
+                billingFreq: item.billing_frequency || 'N/A',
+                date: item.date ? new Date(item.date).toLocaleDateString() : 'N/A',
+                effectiveDate: item.effective_date ? new Date(item.effective_date).toLocaleDateString() : 'N/A',
+                termDuration: item.term_duration || 'N/A',
+                paymentMethod: item.payment_method || 'N/A'
+            }));
+            
+            res.json({ policies: formattedPolicies });
+            
+        } catch (err) {
+            console.error("Error fetching all policies:", err);
+            res.status(500).json({ error: 'Failed to fetch policy book of business' });
+        }
+    },
+
+    async createPolicy(req, res) {
+        const agentId = req.user.sub;
+        const {
+            policy_number,
+            carrier,
+            owner_name,
+            insured_name,
+            insured_birth,
+            product_type,
+            product_name,
+            policy_status,
+            policy_face_amount,
+            premium,
+            billing_frequency,
+            payment_method,
+            date_of_issue,
+            effective_date,
+            term_duration
+        } = req.body;
+
+        if (!policy_number || !carrier || !owner_name) {
+            return res.status(400).json({ error: 'Policy number, carrier, and owner name are required.' });
+        }
+
+        try {
+            await db.execute(`
+                INSERT INTO unified_policies (
+                    policy_number, carrier, agent_id, policy_status, product_type, product_name,
+                    insured_name, insured_birth, owner_name, policy_face_amount, premium,
+                    billing_frequency, date_of_issue, effective_date, term_duration, payment_method
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+                policy_number, carrier, agentId, policy_status || 'Active', product_type || null, product_name || null,
+                insured_name || owner_name, insured_birth || null, owner_name, policy_face_amount || 0, premium || 0,
+                billing_frequency || null, date_of_issue || null, effective_date || null, term_duration || null, payment_method || null
+            ]);
+
+            res.status(201).json({ message: 'Policy manually added to Book of Business successfully.' });
+        } catch (err) {
+            console.error("Error inserting manual policy:", err);
+            // Handle duplicate policy number gracefully
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({ error: 'A policy with this policy number already exists.' });
+            }
+            res.status(500).json({ error: 'Failed to insert policy' });
         }
     }
 };

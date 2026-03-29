@@ -16,9 +16,10 @@ import {
     Map,
     Globe,
     ChevronDown,
-    CheckCircle,
     XCircle,
-    RefreshCw
+    RefreshCw,
+    ChevronRight,
+    CheckCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -36,6 +37,19 @@ export default function MapperPage() {
     const [viewingPattern, setViewingPattern] = useState(null);
     const [fetchingPatterns, setFetchingPatterns] = useState(true);
     const [dropdownOpen, setDropdownOpen] = useState(false);
+
+    // Edit & Map State
+    const [isEditingPattern, setIsEditingPattern] = useState(false);
+    const [editedSteps, setEditedSteps] = useState([]);
+    const [customMapping, setCustomMapping] = useState({});
+    const [newMapKey, setNewMapKey] = useState('');
+    const [newMapVal, setNewMapVal] = useState('policy_number');
+
+    const dbFields = [
+        'policy_number', 'policy_status', 'product_name', 'product_type', 
+        'insured_name', 'owner_name', 'policy_face_amount', 'premium', 
+        'effective_date', 'date_of_issue'
+    ];
 
     const { connected, emit, on, off } = useSocket();
 
@@ -163,8 +177,63 @@ export default function MapperPage() {
         try {
             const res = await axios.get(`/api/mapper/patterns/${companyId}`);
             setViewingPattern(res.data);
+            setEditedSteps(res.data.steps || []);
+            setIsEditingPattern(false);
+
+            // Set Data Mapping UI
+            const comp = companies.find((c) => c.id === companyId);
+            let mapping = {};
+            if (comp && comp.dataMapping) {
+                try {
+                    mapping = typeof comp.dataMapping === 'string' ? JSON.parse(comp.dataMapping) : comp.dataMapping;
+                } catch(e){}
+            }
+            setCustomMapping(mapping);
+            setNewMapKey('');
         } catch (err) {
             console.error('Failed to fetch pattern:', err);
+        }
+    };
+
+    const handleStepChange = (idx, field, value) => {
+        const updated = [...editedSteps];
+        updated[idx] = { ...updated[idx], [field]: value };
+        setEditedSteps(updated);
+    };
+
+    const handleSavePatternEdits = async () => {
+        try {
+            await axios.put(`/api/mapper/patterns/${viewingPattern.companyId}`, { steps: editedSteps });
+            setIsEditingPattern(false);
+            setViewingPattern({...viewingPattern, steps: editedSteps});
+            fetchPatterns();
+            alert('Pattern updated successfully.');
+        } catch (err) {
+            console.error('Failed to save edits', err);
+            alert('Failed to save pattern edits.');
+        }
+    };
+
+    const handleAddMapping = () => {
+        if (!newMapKey.trim()) return;
+        setCustomMapping((prev) => ({ ...prev, [newMapKey.trim()]: newMapVal }));
+        setNewMapKey('');
+    };
+
+    const handleRemoveMapping = (key) => {
+        const updated = { ...customMapping };
+        delete updated[key];
+        setCustomMapping(updated);
+    };
+
+    const handleSaveMapping = async () => {
+        try {
+            await axios.put(`/api/mapper/companies/${viewingPattern.companyId}/mapping`, { mapping: customMapping });
+            fetchCompanies(); // Refresh company list so it has latest mapping
+            alert('Data mapping saved successfully.');
+        } catch (err) {
+            console.error('Failed to save mapping', err);
+            alert('Failed to save custom mapping.');
         }
     };
 
@@ -372,18 +441,107 @@ export default function MapperPage() {
                             <CardHeader className="pb-2">
                                 <div className="flex items-center justify-between">
                                     <CardTitle className="text-base">{viewingPattern.companyName}</CardTitle>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="text-xs"
-                                        onClick={() => setViewingPattern(null)}
-                                    >
-                                        Close
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        {!isEditingPattern ? (
+                                            <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setIsEditingPattern(true)}>
+                                                Edit Steps
+                                            </Button>
+                                        ) : (
+                                            <>
+                                                <Button variant="outline" size="sm" className="text-xs h-8 text-slate-500" onClick={() => setIsEditingPattern(false)}>
+                                                    Cancel
+                                                </Button>
+                                                <Button size="sm" className="text-xs h-8" onClick={handleSavePatternEdits}>
+                                                    Save Steps
+                                                </Button>
+                                            </>
+                                        )}
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="text-xs h-8 text-slate-500"
+                                            onClick={() => { setViewingPattern(null); setIsEditingPattern(false); }}
+                                        >
+                                            Close
+                                        </Button>
+                                    </div>
                                 </div>
                             </CardHeader>
-                            <CardContent className="pt-0">
-                                <StepList steps={viewingPattern.steps} title="Pattern Steps" />
+                            <CardContent className="pt-0 space-y-6">
+                                {/* Steps editor */}
+                                <div>
+                                    <StepList 
+                                        steps={isEditingPattern ? editedSteps : viewingPattern.steps} 
+                                        title="Flow Steps" 
+                                        isEditing={isEditingPattern} 
+                                        onStepChange={handleStepChange} 
+                                    />
+                                </div>
+                                
+                                <hr className="border-slate-100" />
+
+                                {/* Data Mapping configuration */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Data Mapping</h3>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs bg-slate-50" onClick={handleSaveMapping}>
+                                            Save Mapping
+                                        </Button>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mb-3 leading-tight">
+                                        Map the specific column headers from the Carrier's table to your system database columns.
+                                    </p>
+                                    
+                                    <div className="space-y-2 mb-3 max-h-48 overflow-y-auto pr-1">
+                                        {Object.entries(customMapping).map(([carrierKey, localKey]) => (
+                                            <div key={carrierKey} className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-100 rounded-md">
+                                                <div className="flex-1 min-w-0 font-mono text-xs text-slate-600 truncate px-2 py-1 bg-white border border-slate-200 rounded">
+                                                    {carrierKey}
+                                                </div>
+                                                <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                                <div className="flex-1 min-w-0 font-mono text-xs text-primary-700 font-semibold truncate px-2 py-1 bg-primary-50 rounded">
+                                                    {localKey}
+                                                </div>
+                                                <button onClick={() => handleRemoveMapping(carrierKey)} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors">
+                                                    <XCircle className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {Object.keys(customMapping).length === 0 && (
+                                            <div className="text-center p-4 border border-dashed border-slate-200 rounded-md bg-slate-50">
+                                                <p className="text-xs text-slate-500 font-medium">No custom mappings defined.</p>
+                                                <p className="text-[10px] text-slate-400 mt-1 mb-2">The system will fall back to using default auto-match logic.</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex gap-2 items-start mt-2 p-3 bg-slate-50/80 rounded-lg border border-slate-100">
+                                        <div className="flex-1 min-w-0">
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Carrier Column</label>
+                                            <input 
+                                                className="w-full text-xs p-1.5 border border-slate-200 rounded focus:ring-1 focus:ring-primary-500 outline-none placeholder:text-slate-300 font-mono" 
+                                                value={newMapKey}
+                                                onChange={e => setNewMapKey(e.target.value)}
+                                                placeholder="e.g. Cert Number"
+                                            />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Database Column</label>
+                                            <select 
+                                                className="w-full text-xs font-mono p-1.5 border border-slate-200 rounded focus:ring-1 focus:ring-primary-500 outline-none text-slate-700 bg-white"
+                                                value={newMapVal}
+                                                onChange={e => setNewMapVal(e.target.value)}
+                                            >
+                                                {dbFields.map(f => (
+                                                    <option key={f} value={f}>{f}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="pt-5">
+                                            <Button size="sm" variant="default" className="h-[30px] px-3" onClick={handleAddMapping}>Add</Button>
+                                        </div>
+                                    </div>
+                                </div>
                             </CardContent>
                         </Card>
                     )}

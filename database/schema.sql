@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 -- Create Companies table (Carriers)
 CREATE TABLE IF NOT EXISTS companies (
     company_id VARCHAR(50) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL
+    name VARCHAR(255) NOT NULL,
+    data_mapping JSON DEFAULT NULL
 );
 
 -- Create Agent Carrier Credentials
