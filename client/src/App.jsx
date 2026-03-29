@@ -1,6 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import PricingPage from './pages/PricingPage';
+import ContactPage from './pages/ContactPage';
 import DashboardPage from './pages/DashboardPage';
 import CredentialsPage from './pages/CredentialsPage';
 import MapperPage from './pages/MapperPage';
@@ -32,6 +35,21 @@ function App() {
           <Route path="/" element={
             <PublicRoute>
               <LoginPage />
+            </PublicRoute>
+          } />
+          <Route path="/pricing" element={
+            <PublicRoute>
+              <PricingPage />
+            </PublicRoute>
+          } />
+          <Route path="/contact" element={
+            <PublicRoute>
+              <ContactPage />
+            </PublicRoute>
+          } />
+          <Route path="/register" element={
+            <PublicRoute>
+              <RegisterPage />
             </PublicRoute>
           } />
           <Route path="/dashboard" element={
